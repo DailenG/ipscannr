@@ -129,7 +129,7 @@ impl Widget for DetailsPane<'_> {
         if self.port_scanning {
             lines.push(Line::from(Span::styled("Scanning ports…", Theme::dimmed())));
         } else if host.open_ports.is_empty() {
-            if host.is_alive {
+            if host.ports_scanned && host.is_alive {
                 lines.push(Line::from(Span::styled("No open ports found", Theme::dimmed())));
             }
         } else {

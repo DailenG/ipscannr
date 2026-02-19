@@ -102,6 +102,7 @@ pub fn load_cache(range: &str) -> Vec<HostInfo> {
                 hostname: h.hostname.clone(),
                 mac,
                 open_ports: h.open_ports.clone(),
+                ports_scanned: !h.open_ports.is_empty(),
                 cached_at: Some(scanned_at),
                 method,
                 status,

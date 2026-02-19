@@ -23,6 +23,8 @@ pub struct HostInfo {
     pub hostname: Option<String>,
     pub mac: Option<MacInfo>,
     pub open_ports: Vec<u16>,
+    /// True once a port scan has been run for this host (distinguishes "none found" from "not yet scanned")
+    pub ports_scanned: bool,
     /// Unix timestamp (seconds) when this entry was loaded from cache; None = live scan data
     pub cached_at: Option<u64>,
     /// Detection method and status
@@ -39,6 +41,7 @@ impl From<PingResult> for HostInfo {
             hostname: None,
             mac: None,
             open_ports: Vec::new(),
+            ports_scanned: false,
             cached_at: None,
             method: result.method,
             status: result.status,
@@ -500,6 +503,20 @@ impl App {
                         }
                     }
                     Focus::DetailsPane => Focus::RangeInput,
+                };
+                Ok(None)
+            }
+            Action::SwitchPaneReverse => {
+                self.focus = match self.focus {
+                    Focus::RangeInput => {
+                        if self.show_details {
+                            Focus::DetailsPane
+                        } else {
+                            Focus::HostsTable
+                        }
+                    }
+                    Focus::HostsTable => Focus::RangeInput,
+                    Focus::DetailsPane => Focus::HostsTable,
                 };
                 Ok(None)
             }

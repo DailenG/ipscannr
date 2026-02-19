@@ -196,6 +196,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 if let Some((ip, open_ports)) = port_result {
                     if let Some(host) = app.hosts.iter_mut().find(|h| h.ip == ip) {
                         host.open_ports = open_ports;
+                        host.ports_scanned = true;
                     }
                 }
                 app.port_scanning = false;
