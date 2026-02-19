@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use crate::config::Config;
 use crate::input::{Action, InputMode};
 use crate::scanner::{
-    get_active_adapters, get_mac_address, scan_hosts, AdapterInfo, DnsResolver, IpRange, MacInfo,
-    PingResult, PortScanner, COMMON_PORTS,
+    get_active_adapters, get_mac_address, scan_hosts, AdapterInfo, DnsResolver, HostStatus,
+    IpRange, MacInfo, PingMethod, PingResult, PortScanner, COMMON_PORTS,
 };
 
 /// Information about a scanned host
@@ -25,6 +25,9 @@ pub struct HostInfo {
     pub open_ports: Vec<u16>,
     /// Unix timestamp (seconds) when this entry was loaded from cache; None = live scan data
     pub cached_at: Option<u64>,
+    /// Detection method and status
+    pub method: PingMethod,
+    pub status: HostStatus,
 }
 
 impl From<PingResult> for HostInfo {
@@ -37,6 +40,8 @@ impl From<PingResult> for HostInfo {
             mac: None,
             open_ports: Vec::new(),
             cached_at: None,
+            method: result.method,
+            status: result.status,
         }
     }
 }

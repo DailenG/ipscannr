@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::app::HostInfo;
-use crate::scanner::MacInfo;
+use crate::scanner::{HostStatus, MacInfo, PingMethod};
 
 const CACHE_FILE: &str = "ipscannr_cache.json";
 const CACHE_FILE_ENV: &str = "IPSCANNR_CACHE_FILE";
@@ -19,6 +19,10 @@ struct CachedHost {
     mac_address: Option<String>,
     mac_vendor: Option<String>,
     open_ports: Vec<u16>,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
 }
 
 fn cache_file_path() -> std::path::PathBuf {
@@ -65,6 +69,32 @@ pub fn load_cache(range: &str) -> Vec<HostInfo> {
                 address: addr.clone(),
                 vendor: h.mac_vendor.clone(),
             });
+            // Default to TCP/Online for legacy cached entries without method/status
+            let method = h
+                .method
+                .as_deref()
+                .and_then(|m| match m {
+                    "ICMP" => Some(PingMethod::Icmp),
+                    "TCP" => Some(PingMethod::Tcp),
+                    _ => None,
+                })
+                .unwrap_or(PingMethod::Tcp);
+            
+            let status = h
+                .status
+                .as_deref()
+                .and_then(|s| match s {
+                    "Online" => Some(HostStatus::Online),
+                    "OnlineNoIcmp" => Some(HostStatus::OnlineNoIcmp),
+                    "Offline" => Some(HostStatus::Offline),
+                    _ => None,
+                })
+                .unwrap_or(if h.is_alive {
+                    HostStatus::Online
+                } else {
+                    HostStatus::Offline
+                });
+
             Some(HostInfo {
                 ip,
                 is_alive: h.is_alive,
@@ -73,6 +103,8 @@ pub fn load_cache(range: &str) -> Vec<HostInfo> {
                 mac,
                 open_ports: h.open_ports.clone(),
                 cached_at: Some(scanned_at),
+                method,
+                status,
             })
         })
         .collect()
@@ -94,6 +126,12 @@ pub fn save_cache(range: &str, hosts: &[HostInfo]) {
             mac_address: h.mac.as_ref().map(|m| m.address.clone()),
             mac_vendor: h.mac.as_ref().and_then(|m| m.vendor.clone()),
             open_ports: h.open_ports.clone(),
+            method: Some(h.method.to_string()),
+            status: Some(match h.status {
+                HostStatus::Online => "Online".to_string(),
+                HostStatus::OnlineNoIcmp => "OnlineNoIcmp".to_string(),
+                HostStatus::Offline => "Offline".to_string(),
+            }),
         })
         .collect();
 
@@ -160,6 +198,12 @@ mod tests {
             }),
             open_ports: vec![80, 443],
             cached_at: None,
+            method: PingMethod::Icmp,
+            status: if is_alive {
+                HostStatus::Online
+            } else {
+                HostStatus::Offline
+            },
         }
     }
 

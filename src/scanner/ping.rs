@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use surge_ping::{Client, Config as PingConfig, PingIdentifier, PingSequence, ICMP};
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::timeout;
 
@@ -13,19 +14,41 @@ pub struct PingResult {
     pub is_alive: bool,
     pub rtt: Option<Duration>,
     pub method: PingMethod,
+    pub status: HostStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PingMethod {
     Icmp,
-    TcpSyn,
+    Tcp,
 }
 
 impl std::fmt::Display for PingMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PingMethod::Icmp => write!(f, "ICMP"),
-            PingMethod::TcpSyn => write!(f, "TCP"),
+            PingMethod::Tcp => write!(f, "TCP"),
+        }
+    }
+}
+
+/// Status of the host detection
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HostStatus {
+    /// Host responded to ICMP or TCP probes
+    Online,
+    /// Host has open ports but doesn't respond to ICMP
+    OnlineNoIcmp,
+    /// Host appears offline (no response to any probe)
+    Offline,
+}
+
+impl std::fmt::Display for HostStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HostStatus::Online => write!(f, "Online"),
+            HostStatus::OnlineNoIcmp => write!(f, "Online (no ICMP)"),
+            HostStatus::Offline => write!(f, "Offline"),
         }
     }
 }
@@ -52,15 +75,24 @@ impl Default for PingerConfig {
 pub struct Pinger {
     config: PingerConfig,
     semaphore: Arc<Semaphore>,
+    icmp_client: Option<Arc<Client>>,
 }
 
 impl Pinger {
     pub fn new(config: PingerConfig) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.concurrent_limit));
-        Self { config, semaphore }
+        
+        // Try to create ICMP client - may fail without admin privileges
+        let icmp_client = Client::new(&PingConfig::default()).ok().map(Arc::new);
+        
+        Self {
+            config,
+            semaphore,
+            icmp_client,
+        }
     }
 
-    /// Ping a single host using TCP connect (more reliable on Windows without admin)
+    /// Ping a single host - tries ICMP first, then TCP probes as fallback
     pub async fn ping(&self, ip: Ipv4Addr) -> PingResult {
         let permit = self.semaphore.acquire().await;
         if permit.is_err() {
@@ -68,32 +100,80 @@ impl Pinger {
                 ip,
                 is_alive: false,
                 rtt: None,
-                method: PingMethod::TcpSyn,
+                method: PingMethod::Icmp,
+                status: HostStatus::Offline,
             };
         }
         let _permit = permit.ok();
 
-        // Try TCP connect to common ports (more reliable without raw sockets)
-        let ports = [80, 443, 22, 445, 139, 135, 3389];
-
-        for _ in 0..=self.config.retries {
-            for &port in &ports {
-                if let Some(rtt) = self.tcp_ping(ip, port).await {
+        // Try ICMP ping first if we have a client
+        if let Some(client) = &self.icmp_client {
+            for attempt in 0..=self.config.retries {
+                if let Some(rtt) = self.icmp_ping(client, ip, attempt as u16).await {
                     return PingResult {
                         ip,
                         is_alive: true,
                         rtt: Some(rtt),
-                        method: PingMethod::TcpSyn,
+                        method: PingMethod::Icmp,
+                        status: HostStatus::Online,
                     };
                 }
             }
         }
 
+        // ICMP failed or not available - try TCP probes to common ports
+        let ports = [80, 443, 22, 445, 139, 135, 3389, 21, 23, 25, 53];
+        
+        for _ in 0..=self.config.retries {
+            for &port in &ports {
+                if let Some(rtt) = self.tcp_ping(ip, port).await {
+                    // Host has open port but doesn't respond to ICMP
+                    let status = if self.icmp_client.is_some() {
+                        HostStatus::OnlineNoIcmp
+                    } else {
+                        HostStatus::Online
+                    };
+                    
+                    return PingResult {
+                        ip,
+                        is_alive: true,
+                        rtt: Some(rtt),
+                        method: PingMethod::Tcp,
+                        status,
+                    };
+                }
+            }
+        }
+
+        // No response to any probe
         PingResult {
             ip,
             is_alive: false,
             rtt: None,
-            method: PingMethod::TcpSyn,
+            method: if self.icmp_client.is_some() {
+                PingMethod::Icmp
+            } else {
+                PingMethod::Tcp
+            },
+            status: HostStatus::Offline,
+        }
+    }
+
+    async fn icmp_ping(&self, client: &Client, ip: Ipv4Addr, seq: u16) -> Option<Duration> {
+        let start = Instant::now();
+        let payload = [0; 56]; // Standard ping payload size
+        
+        let mut pinger = client.pinger(IpAddr::V4(ip), PingIdentifier(rand::random())).await;
+        
+        let result = timeout(
+            self.config.timeout,
+            pinger.ping(PingSequence(seq), &payload),
+        )
+        .await;
+
+        match result {
+            Ok(Ok((_packet, duration))) => Some(duration),
+            _ => None,
         }
     }
 
