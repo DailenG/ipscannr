@@ -24,7 +24,33 @@ cargo clippy
 cargo fmt
 ```
 
-There is no test suite — the project relies on manual TUI testing.
+## Engineering Practices (Required)
+
+### Commit discipline
+- Make **small, atomic commits** for each logical change (one fix/refactor/test unit at a time).
+- Commit frequently after each passing validation gate.
+- Keep commit messages scoped and explicit (`scope: intent` + short rationale).
+- Prefer revert-friendly history over large bundled changes.
+
+### Validation gates (run continuously)
+- Fast gate: `cargo check`
+- Focused gate: run tests for touched modules first (for example `cargo test cache::tests`)
+- Broader gate: `cargo test`
+- Quality gate: `cargo clippy`
+- Build gate: `cargo build --release` at phase boundaries and before handoff
+- Formatting: repository currently contains pre-existing rustfmt drift; avoid broad formatting-only edits unless explicitly doing a formatting pass.
+
+### Testing expectations
+- Add tests alongside behavior changes, especially for parser logic, cache semantics, and async control flow.
+- Prefer deterministic unit tests for state transitions and pure functions.
+- For async flows, test cancellation/closure behavior and timeout paths.
+- Re-run tests after every non-trivial refactor to catch regressions early.
+
+### Reliability and performance safeguards
+- Avoid unbounded task fan-out; use bounded worker pools or explicit concurrency limits.
+- Avoid panics in runtime paths (`unwrap`/`expect`) unless invariants are provably guaranteed.
+- Favor durable file-write patterns for persisted state (temp file + replace semantics).
+- Treat pause/resume/cancel paths as high-risk and validate them explicitly after edits.
 
 ## Architecture Overview
 
