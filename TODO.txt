@@ -1,0 +1,14 @@
+ok here's the todos for later:                                                                                                                           
+  - Bug: right now if I hit 'q' while the range pane is selected right after the app first initializes, it changes "focus" to the "Hosts" pane for         
+  some reason, and I hit it one more time then it quits.                                                                                                   
+  - Feat: if I hit the backspace while in the range pane then it should immediately change it to "custom" range and let me edit the current contents       
+  - Feat (later): i'd like to be able to use the spacebar to select multiple entries that can be collectively exported                                     
+  - Feat (later): when viewing the "Host Details" I'd like to be able to execute additional functions such as Wake On Lan, scan for common ports, ping     
+  continuiously and display the ping results somehow, run tracert, save details         
+
+
+
+TODO:
+  - Feat: Backspace in range pane → custom edit mode                                                                                                       
+  - Multi-select with spacebar for batch export                                                                                                            
+  - Host Details actions (WOL, port scan, continuous ping, tracert, save)    
