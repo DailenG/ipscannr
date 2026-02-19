@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     let mut app = App::new(config);
 
     // Run app
-    let result = run_app(&mut terminal, &mut app, cli.scan, keyboard_enhanced).await;
+    let result = run_app(&mut terminal, &mut app, cli.scan).await;
 
     // Restore terminal
     if keyboard_enhanced {
@@ -112,7 +112,6 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     auto_scan: bool,
-    keyboard_enhanced: bool,
 ) -> Result<()> {
     let mut scan_rx: Option<mpsc::Receiver<ScanEvent>> = None;
     let mut overlay_rx: Option<mpsc::Receiver<String>> = None;
@@ -236,10 +235,12 @@ async fn run_app<B: ratatui::backend::Backend>(
             // Check for user input — drain all queued events so held keys don't
             // continue firing after release (one-event-per-tick caused overshoot).
             _ = tokio::time::sleep(timeout) => {
-                // On terminals without Kitty keyboard enhancement (legacy console),
-                // poll the physical Left Ctrl state via Win32. On modern terminals
-                // (keyboard_enhanced == true), rely on crossterm press/release events.
-                if !keyboard_enhanced {
+                // On Windows, poll physical Left Ctrl state via Win32.
+                // GetAsyncKeyState reads the hardware key state directly and works
+                // in both legacy console and Windows Terminal (ConPTY) regardless of
+                // which window the OS considers "foreground".
+                #[cfg(windows)]
+                {
                     app.show_keybindings = is_left_ctrl_held();
                 }
 
@@ -1021,32 +1022,16 @@ fn enable_mouse_input_win32() {
 fn enable_mouse_input_win32() {}
 
 /// Poll whether Left Ctrl is physically held right now using Win32 GetAsyncKeyState.
-/// This only works reliably in legacy Windows console (conhost.exe).
+/// GetAsyncKeyState reads hardware key state directly — it works in both legacy
+/// console (conhost.exe) and modern terminals (Windows Terminal / ConPTY) without
+/// needing a window focus check.
 #[cfg(windows)]
 fn is_left_ctrl_held() -> bool {
-    use std::ffi::c_void;
-    
     const VK_LCONTROL: i32 = 0xA2;
     extern "system" {
         fn GetAsyncKeyState(vKey: i32) -> i16;
-        fn GetForegroundWindow() -> *mut c_void;
-        fn GetConsoleWindow() -> *mut c_void;
     }
-    
-    unsafe {
-        let console_window = GetConsoleWindow();
-        
-        // Check focus if we have a console window handle
-        if !console_window.is_null() {
-            let foreground_window = GetForegroundWindow();
-            if foreground_window != console_window {
-                return false;
-            }
-        }
-        
-        // Check if left control key is currently pressed
-        (GetAsyncKeyState(VK_LCONTROL) as u16) & 0x8000 != 0
-    }
+    unsafe { (GetAsyncKeyState(VK_LCONTROL) as u16) & 0x8000 != 0 }
 }
 
 #[cfg(not(windows))]
