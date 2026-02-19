@@ -1008,13 +1008,29 @@ fn enable_mouse_input_win32() {}
 /// Poll whether Left Ctrl is physically held right now using Win32 GetAsyncKeyState.
 /// This sidesteps the Kitty keyboard protocol entirely — no terminal capability needed.
 /// The high-order bit of the return value is set when the key is down.
+/// Only returns true if the console window has focus.
 #[cfg(windows)]
 fn is_left_ctrl_held() -> bool {
+    use std::ffi::c_void;
+    
     const VK_LCONTROL: i32 = 0xA2;
     extern "system" {
         fn GetAsyncKeyState(vKey: i32) -> i16;
+        fn GetForegroundWindow() -> *mut c_void;
+        fn GetConsoleWindow() -> *mut c_void;
     }
-    unsafe { (GetAsyncKeyState(VK_LCONTROL) as u16) & 0x8000 != 0 }
+    
+    unsafe {
+        // Only check key state if our console window has focus
+        let console_window = GetConsoleWindow();
+        let foreground_window = GetForegroundWindow();
+        
+        if console_window.is_null() || foreground_window != console_window {
+            return false;
+        }
+        
+        (GetAsyncKeyState(VK_LCONTROL) as u16) & 0x8000 != 0
+    }
 }
 
 #[cfg(not(windows))]
