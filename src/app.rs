@@ -746,6 +746,7 @@ impl App {
         Self::SPINNER_FRAMES[(self.animation_tick as usize) % Self::SPINNER_FRAMES.len()]
     }
 
+    /// Short state string for the bottom status bar (must stay compact)
     pub fn status_text(&self) -> String {
         if self.adapters_loading {
             return format!("{} Loading", self.spinner());
@@ -754,24 +755,17 @@ impl App {
         match self.scan_state {
             ScanState::Idle => "Ready".to_string(),
             ScanState::Scanning => {
-                format!(
-                    "{} Scanning {}/{}",
-                    self.spinner(),
-                    self.scan_completed,
-                    self.scan_total
-                )
+                format!("{} {}/{}", self.spinner(), self.scan_completed, self.scan_total)
             }
-            ScanState::Paused => {
-                format!(
-                    "PAUSED {}/{} [Space]",
-                    self.scan_completed, self.scan_total
-                )
-            }
-            ScanState::Completed => {
-                let online = self.hosts.iter().filter(|h| h.is_alive).count();
-                format!("{} hosts ({} online)", self.hosts.len(), online)
-            }
+            ScanState::Paused => "Paused".to_string(),
+            ScanState::Completed => "Done".to_string(),
         }
+    }
+
+    /// Full summary shown in the header Status box after a scan completes
+    pub fn completion_summary(&self) -> String {
+        let online = self.hosts.iter().filter(|h| h.is_alive).count();
+        format!("{} hosts ({} online)", self.hosts.len(), online)
     }
 
     pub async fn start_scan(&mut self) -> Result<mpsc::Receiver<ScanEvent>> {

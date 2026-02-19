@@ -82,11 +82,14 @@ impl<'a> StatefulWidget for ScanTable<'a> {
                     Span::styled("○", Theme::status_offline())
                 };
 
-                let hostname = host
-                    .hostname
-                    .as_deref()
-                    .unwrap_or("-")
-                    .to_string();
+                // Fall back to MAC vendor when no hostname is resolved
+                let (hostname_text, hostname_style) = if let Some(name) = host.hostname.as_deref() {
+                    (name.to_string(), Theme::default())
+                } else if let Some(vendor) = host.mac.as_ref().and_then(|m| m.vendor.as_deref()) {
+                    (format!("[{}]", vendor), Theme::dimmed())
+                } else {
+                    ("-".to_string(), Theme::default())
+                };
 
                 let cells: Vec<Line> = if self.show_rtt {
                     let rtt = host
@@ -97,14 +100,14 @@ impl<'a> StatefulWidget for ScanTable<'a> {
                     vec![
                         ip_cell,
                         Line::from(status_span),
-                        Line::from(hostname),
+                        Line::from(Span::styled(hostname_text, hostname_style)),
                         Line::from(rtt),
                     ]
                 } else {
                     vec![
                         ip_cell,
                         Line::from(status_span),
-                        Line::from(hostname),
+                        Line::from(Span::styled(hostname_text, hostname_style)),
                     ]
                 };
 

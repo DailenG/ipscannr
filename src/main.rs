@@ -433,8 +433,13 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             .show_percentage(true);
         f.render_widget(progress, inner);
     } else {
-        let status = Paragraph::new(app.status_text())
-            .style(Theme::default());
+        // Show full host summary after scan completes, short state otherwise
+        let text = if app.scan_state == app::ScanState::Completed {
+            app.completion_summary()
+        } else {
+            app.status_text()
+        };
+        let status = Paragraph::new(text).style(Theme::default());
         f.render_widget(status, inner);
     }
 }
@@ -482,10 +487,10 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, compact: bool) {
     };
 
     let online_count = app.hosts.iter().filter(|h| h.is_alive).count();
+    // Keep this short — the right slot in the status bar is only ~30 chars wide
     let status_right = format!(
-        "{}{} hosts | {} online | {}",
+        "{}{} online | {}",
         selection_prefix,
-        app.hosts.len(),
         online_count,
         app.status_text()
     );
