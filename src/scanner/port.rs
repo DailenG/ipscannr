@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
-
-use tokio::sync::Semaphore;
+use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::timeout;
 
 /// Common ports to scan by default
@@ -134,21 +133,48 @@ impl PortScanner {
 
     /// Scan multiple ports on a host
     pub async fn scan_ports(&self, ip: Ipv4Addr, ports: &[u16]) -> Vec<PortResult> {
-        let mut handles = Vec::new();
+        let worker_count = self.config.concurrent_limit.max(1);
+        let (job_tx, job_rx) = mpsc::channel::<u16>(worker_count.saturating_mul(2));
+        let (result_tx, mut result_rx) = mpsc::channel::<PortResult>(ports.len().max(1));
+        let shared_rx = Arc::new(Mutex::new(job_rx));
+        let mut workers = Vec::with_capacity(worker_count);
+
+        for _ in 0..worker_count {
+            let scanner = self.clone_inner();
+            let rx = Arc::clone(&shared_rx);
+            let tx = result_tx.clone();
+            workers.push(tokio::spawn(async move {
+                loop {
+                    let next_port = {
+                        let mut guard = rx.lock().await;
+                        guard.recv().await
+                    };
+                    let Some(port) = next_port else {
+                        break;
+                    };
+                    let result = scanner.scan_port(ip, port).await;
+                    if tx.send(result).await.is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        drop(result_tx);
 
         for &port in ports {
-            let scanner = self.clone_inner();
-            let handle = tokio::spawn(async move {
-                scanner.scan_port(ip, port).await
-            });
-            handles.push(handle);
+            if job_tx.send(port).await.is_err() {
+                break;
+            }
         }
+        drop(job_tx);
 
         let mut results = Vec::new();
-        for handle in handles {
-            if let Ok(result) = handle.await {
-                results.push(result);
-            }
+        while let Some(result) = result_rx.recv().await {
+            results.push(result);
+        }
+
+        for worker in workers {
+            let _ = worker.await;
         }
 
         // Sort by port number

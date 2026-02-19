@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use tokio::sync::Semaphore;
+use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::timeout;
 
 /// Result of a ping operation
@@ -121,22 +121,41 @@ pub async fn scan_hosts(
     progress_tx: tokio::sync::mpsc::Sender<PingResult>,
 ) -> Result<()> {
     let pinger = Arc::new(Pinger::new(config));
-    let mut handles = Vec::new();
+    let worker_count = pinger.config.concurrent_limit.max(1);
+    let (job_tx, job_rx) = mpsc::channel::<Ipv4Addr>(worker_count.saturating_mul(2));
+    let shared_rx = Arc::new(Mutex::new(job_rx));
 
-    for ip in addresses {
-        let pinger = Arc::clone(&pinger);
+    let mut workers = Vec::with_capacity(worker_count);
+    for _ in 0..worker_count {
+        let rx = Arc::clone(&shared_rx);
         let tx = progress_tx.clone();
-
-        let handle = tokio::spawn(async move {
-            let result = pinger.ping(ip).await;
-            let _ = tx.send(result).await;
-        });
-
-        handles.push(handle);
+        let pinger = Arc::clone(&pinger);
+        workers.push(tokio::spawn(async move {
+            loop {
+                let next_ip = {
+                    let mut guard = rx.lock().await;
+                    guard.recv().await
+                };
+                let Some(ip) = next_ip else {
+                    break;
+                };
+                let result = pinger.ping(ip).await;
+                if tx.send(result).await.is_err() {
+                    break;
+                }
+            }
+        }));
     }
 
-    for handle in handles {
-        let _ = handle.await;
+    for ip in addresses {
+        if job_tx.send(ip).await.is_err() {
+            break;
+        }
+    }
+    drop(job_tx);
+
+    for worker in workers {
+        let _ = worker.await;
     }
 
     Ok(())
