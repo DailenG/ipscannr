@@ -8,6 +8,7 @@ use crate::app::HostInfo;
 use crate::scanner::MacInfo;
 
 const CACHE_FILE: &str = "ipscannr_cache.json";
+const CACHE_FILE_ENV: &str = "IPSCANNR_CACHE_FILE";
 
 #[derive(Serialize, Deserialize)]
 struct CachedHost {
@@ -18,6 +19,12 @@ struct CachedHost {
     mac_address: Option<String>,
     mac_vendor: Option<String>,
     open_ports: Vec<u16>,
+}
+
+fn cache_file_path() -> std::path::PathBuf {
+    std::env::var_os(CACHE_FILE_ENV)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(CACHE_FILE))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -37,7 +44,8 @@ fn now_secs() -> u64 {
 
 /// Load cached hosts for a given IP range. Returns empty Vec if no cache exists.
 pub fn load_cache(range: &str) -> Vec<HostInfo> {
-    let Ok(content) = std::fs::read_to_string(CACHE_FILE) else {
+    let cache_path = cache_file_path();
+    let Ok(content) = std::fs::read_to_string(cache_path) else {
         return Vec::new();
     };
     let Ok(cache_file): Result<CacheFile, _> = serde_json::from_str(&content) else {
@@ -95,7 +103,8 @@ pub fn save_cache(range: &str, hosts: &[HostInfo]) {
     };
 
     // Load existing file and merge, preserving entries for other ranges
-    let mut cache_file: CacheFile = std::fs::read_to_string(CACHE_FILE)
+    let cache_path = cache_file_path();
+    let mut cache_file: CacheFile = std::fs::read_to_string(&cache_path)
         .ok()
         .and_then(|content| serde_json::from_str(&content).ok())
         .unwrap_or_default();
@@ -103,7 +112,14 @@ pub fn save_cache(range: &str, hosts: &[HostInfo]) {
     cache_file.insert(range.to_string(), entry);
 
     if let Ok(json) = serde_json::to_string_pretty(&cache_file) {
-        let _ = std::fs::write(CACHE_FILE, json);
+        let tmp_path = cache_path.with_extension("json.tmp");
+        if std::fs::write(&tmp_path, json).is_ok() {
+            let _ = std::fs::remove_file(&cache_path);
+            if std::fs::rename(&tmp_path, &cache_path).is_err() {
+                let _ = std::fs::copy(&tmp_path, &cache_path);
+                let _ = std::fs::remove_file(&tmp_path);
+            }
+        }
     }
 }
 
@@ -119,5 +135,80 @@ pub fn format_cache_age(scanned_at: u64) -> String {
         format!("{}h ago", age / 3600)
     } else {
         format!("{}d ago", age / 86400)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn sample_host(ip: Ipv4Addr, is_alive: bool) -> HostInfo {
+        HostInfo {
+            ip,
+            is_alive,
+            rtt: Some(Duration::from_millis(10)),
+            hostname: Some("host.local".to_string()),
+            mac: Some(MacInfo {
+                address: "AA:BB:CC:DD:EE:FF".to_string(),
+                vendor: Some("Vendor".to_string()),
+            }),
+            open_ports: vec![80, 443],
+            cached_at: None,
+        }
+    }
+
+    #[test]
+    fn load_cache_returns_empty_for_malformed_json() {
+        let _guard = env_lock().lock().expect("test env lock");
+        let temp_path = std::env::temp_dir().join("ipscannr_cache_malformed_test.json");
+        let _ = std::fs::remove_file(&temp_path);
+        std::fs::write(&temp_path, "{ not-json").expect("write malformed cache");
+        unsafe {
+            std::env::set_var(CACHE_FILE_ENV, &temp_path);
+        }
+
+        let loaded = load_cache("192.168.1.0/24");
+        assert!(loaded.is_empty());
+
+        unsafe {
+            std::env::remove_var(CACHE_FILE_ENV);
+        }
+        let _ = std::fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn save_cache_preserves_other_ranges() {
+        let _guard = env_lock().lock().expect("test env lock");
+        let temp_path = std::env::temp_dir().join("ipscannr_cache_merge_test.json");
+        let _ = std::fs::remove_file(&temp_path);
+        unsafe {
+            std::env::set_var(CACHE_FILE_ENV, &temp_path);
+        }
+
+        let range_a = "10.0.0.0/24";
+        let range_b = "192.168.1.0/24";
+        save_cache(range_a, &[sample_host(Ipv4Addr::new(10, 0, 0, 10), true)]);
+        save_cache(
+            range_b,
+            &[sample_host(Ipv4Addr::new(192, 168, 1, 20), false)],
+        );
+
+        let loaded_a = load_cache(range_a);
+        let loaded_b = load_cache(range_b);
+        assert_eq!(loaded_a.len(), 1);
+        assert_eq!(loaded_b.len(), 1);
+        assert_eq!(loaded_a[0].ip, Ipv4Addr::new(10, 0, 0, 10));
+        assert_eq!(loaded_b[0].ip, Ipv4Addr::new(192, 168, 1, 20));
+
+        unsafe {
+            std::env::remove_var(CACHE_FILE_ENV);
+        }
+        let _ = std::fs::remove_file(temp_path);
     }
 }
