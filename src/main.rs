@@ -72,6 +72,7 @@ async fn main() -> Result<()> {
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                     | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
             )
         );
     }
@@ -86,7 +87,7 @@ async fn main() -> Result<()> {
     let mut app = App::new(config);
 
     // Run app
-    let result = run_app(&mut terminal, &mut app, cli.scan).await;
+    let result = run_app(&mut terminal, &mut app, cli.scan, keyboard_enhanced).await;
 
     // Restore terminal
     if keyboard_enhanced {
@@ -111,6 +112,7 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     auto_scan: bool,
+    keyboard_enhanced: bool,
 ) -> Result<()> {
     let mut scan_rx: Option<mpsc::Receiver<ScanEvent>> = None;
     let mut overlay_rx: Option<mpsc::Receiver<String>> = None;
@@ -234,20 +236,25 @@ async fn run_app<B: ratatui::backend::Backend>(
             // Check for user input — drain all queued events so held keys don't
             // continue firing after release (one-event-per-tick caused overshoot).
             _ = tokio::time::sleep(timeout) => {
-                // On Windows, query the physical key state directly — this is more
-                // reliable than the Kitty keyboard protocol on the Win32 console path.
-                app.show_keybindings = is_left_ctrl_held();
+                // On terminals without Kitty keyboard enhancement (legacy console),
+                // poll the physical Left Ctrl state via Win32. On modern terminals
+                // (keyboard_enhanced == true), rely on crossterm press/release events.
+                if !keyboard_enhanced {
+                    app.show_keybindings = is_left_ctrl_held();
+                }
 
                 while event::poll(Duration::from_millis(0))? {
-                    match event::read()? {
+                    let evt = event::read()?;
+                    match evt {
                         // Left Ctrl alone: show/hide keybindings popup while held
                         Event::Key(key)
                             if key.code
                                 == KeyCode::Modifier(ModifierKeyCode::LeftControl) =>
                         {
-                            app.show_keybindings =
-                                key.kind == KeyEventKind::Press
-                                    || key.kind == KeyEventKind::Repeat;
+                            app.show_keybindings = match key.kind {
+                                KeyEventKind::Press | KeyEventKind::Repeat => true,
+                                KeyEventKind::Release => false,
+                            };
                         }
                         Event::Key(key) if key.kind == KeyEventKind::Press => {
                             // Skip modifier-only keys (Ctrl, Alt, Shift alone don't dismiss popups)
@@ -1014,9 +1021,7 @@ fn enable_mouse_input_win32() {
 fn enable_mouse_input_win32() {}
 
 /// Poll whether Left Ctrl is physically held right now using Win32 GetAsyncKeyState.
-/// This sidesteps the Kitty keyboard protocol entirely — no terminal capability needed.
-/// The high-order bit of the return value is set when the key is down.
-/// Only returns true if the console window has focus (when available).
+/// This only works reliably in legacy Windows console (conhost.exe).
 #[cfg(windows)]
 fn is_left_ctrl_held() -> bool {
     use std::ffi::c_void;
@@ -1029,12 +1034,9 @@ fn is_left_ctrl_held() -> bool {
     }
     
     unsafe {
-        // Check if our console window has focus (when GetConsoleWindow works)
         let console_window = GetConsoleWindow();
         
-        // If GetConsoleWindow returns null (e.g., in Windows Terminal or other modern
-        // emulators), we can't reliably check focus, so allow the key check to proceed.
-        // The event loop will still only process events when the app is actually focused.
+        // Check focus if we have a console window handle
         if !console_window.is_null() {
             let foreground_window = GetForegroundWindow();
             if foreground_window != console_window {
@@ -1042,6 +1044,7 @@ fn is_left_ctrl_held() -> bool {
             }
         }
         
+        // Check if left control key is currently pressed
         (GetAsyncKeyState(VK_LCONTROL) as u16) & 0x8000 != 0
     }
 }
