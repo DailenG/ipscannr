@@ -1,4 +1,5 @@
 mod app;
+mod cache;
 mod config;
 mod input;
 mod scanner;
@@ -120,6 +121,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                         app.range_input = app.adapters[0].subnet.clone();
                         app.range_cursor = app.range_input.len();
                     }
+                    // Show cached results while the user decides whether to scan
+                    app.load_cache();
                     // Start auto-scan if requested
                     if pending_auto_scan {
                         pending_auto_scan = false;
@@ -433,11 +436,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             .show_percentage(true);
         f.render_widget(progress, inner);
     } else {
-        // Show full host summary after scan completes, short state otherwise
-        let text = if app.scan_state == app::ScanState::Completed {
-            app.completion_summary()
-        } else {
-            app.status_text()
+        // Show full host summary after scan completes or while showing cached results
+        let text = match app.scan_state {
+            app::ScanState::Completed => app.completion_summary(),
+            app::ScanState::Idle if app.hosts.iter().any(|h| h.cached_at.is_some()) => {
+                let online = app.hosts.iter().filter(|h| h.is_alive).count();
+                format!("{} cached ({} online)", app.hosts.len(), online)
+            }
+            _ => app.status_text(),
         };
         let status = Paragraph::new(text).style(Theme::default());
         f.render_widget(status, inner);

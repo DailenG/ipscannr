@@ -1,11 +1,13 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
 use crate::app::HostInfo;
+use crate::cache::format_cache_age;
 use crate::scanner::get_service_name;
 use crate::ui::theme::Theme;
 
@@ -55,6 +57,18 @@ impl Widget for DetailsPane<'_> {
         };
 
         let mut lines = Vec::new();
+
+        // Cache indicator — shown when this host's data came from a previous scan
+        if let Some(scanned_at) = host.cached_at {
+            let age = format_cache_age(scanned_at);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("◷ Cached · {}", age),
+                    Style::default().fg(Theme::WARNING),
+                ),
+            ]));
+            lines.push(Line::from(""));
+        }
 
         // IP Address
         lines.push(Line::from(vec![

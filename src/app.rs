@@ -23,6 +23,8 @@ pub struct HostInfo {
     pub hostname: Option<String>,
     pub mac: Option<MacInfo>,
     pub open_ports: Vec<u16>,
+    /// Unix timestamp (seconds) when this entry was loaded from cache; None = live scan data
+    pub cached_at: Option<u64>,
 }
 
 impl From<PingResult> for HostInfo {
@@ -34,6 +36,7 @@ impl From<PingResult> for HostInfo {
             hostname: None,
             mac: None,
             open_ports: Vec::new(),
+            cached_at: None,
         }
     }
 }
@@ -187,6 +190,18 @@ impl App {
             self.adapter_index = Some(0);
             self.range_input = self.adapters[0].subnet.clone();
             self.range_cursor = self.range_input.len();
+        }
+    }
+
+    /// Load cached scan results for the current range (shows data before first scan)
+    pub fn load_cache(&mut self) {
+        let cached = crate::cache::load_cache(&self.range_input);
+        if !cached.is_empty() {
+            self.hosts = cached;
+            self.update_filtered_hosts();
+            if !self.filtered_hosts.is_empty() {
+                self.table_state.select(Some(0));
+            }
         }
     }
 
@@ -440,12 +455,20 @@ impl App {
                 Ok(None)
             }
             Action::Select => {
-                // Enter key
-                if self.focus == Focus::RangeInput {
-                    // Start scan when pressing Enter on Range pane
-                    if self.scan_state != ScanState::Scanning {
-                        return Ok(Some(AppCommand::StartScan));
+                // Enter key — behaviour depends on focused pane
+                match self.focus {
+                    Focus::RangeInput => {
+                        if self.scan_state != ScanState::Scanning {
+                            return Ok(Some(AppCommand::StartScan));
+                        }
                     }
+                    Focus::HostsTable => {
+                        // Jump to Details pane when a host row is selected
+                        if self.show_details && self.selected_host().is_some() {
+                            self.focus = Focus::DetailsPane;
+                        }
+                    }
+                    Focus::DetailsPane => {}
                 }
                 Ok(None)
             }
@@ -753,7 +776,13 @@ impl App {
         }
 
         match self.scan_state {
-            ScanState::Idle => "Ready".to_string(),
+            ScanState::Idle => {
+                if self.hosts.iter().any(|h| h.cached_at.is_some()) {
+                    "Cached".to_string()
+                } else {
+                    "Ready".to_string()
+                }
+            }
             ScanState::Scanning => {
                 format!("{} {}/{}", self.spinner(), self.scan_completed, self.scan_total)
             }
@@ -854,6 +883,8 @@ impl App {
             ScanEvent::ScanComplete => {
                 if self.scan_state != ScanState::Paused {
                     self.scan_state = ScanState::Completed;
+                    // Persist results so they're available at next startup
+                    crate::cache::save_cache(&self.range_input, &self.hosts);
                 }
                 self.scan_cancel_tx = None;
 
