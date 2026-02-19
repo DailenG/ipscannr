@@ -12,7 +12,10 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -52,6 +55,10 @@ async fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    // On Windows, crossterm reads mouse via ReadConsoleInputW which requires
+    // ENABLE_MOUSE_INPUT on the *input* handle — the ANSI ?1000h sequence alone
+    // is not sufficient in all terminal configurations.
+    enable_mouse_input_win32();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -88,6 +95,12 @@ async fn run_app<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     let mut scan_rx: Option<mpsc::Receiver<ScanEvent>> = None;
     let mut overlay_rx: Option<mpsc::Receiver<String>> = None;
+    let mut port_scan_rx: Option<mpsc::Receiver<(std::net::Ipv4Addr, Vec<u16>)>> = None;
+
+    // Track last rendered frame area so mouse events can hit-test panes
+    let mut last_area = ratatui::layout::Rect::default();
+    let mut last_table_offset: usize = 0;
+
 
     // Load adapters in background for faster startup
     let (adapter_tx, mut adapter_rx) = mpsc::channel(1);
@@ -104,7 +117,10 @@ async fn run_app<B: ratatui::backend::Backend>(
         // Tick animation for activity indicator
         app.tick_animation();
 
-        terminal.draw(|f| draw_ui(f, app))?;
+        terminal.draw(|f| {
+            last_area = f.area();
+            draw_ui(f, app, &mut last_table_offset);
+        })?;
 
         // Handle events with timeout for scan updates
         let timeout = Duration::from_millis(50);
@@ -149,6 +165,23 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
 
+            // Receive background port scan results
+            port_result = async {
+                if let Some(rx) = &mut port_scan_rx {
+                    rx.recv().await
+                } else {
+                    std::future::pending().await
+                }
+            } => {
+                if let Some((ip, open_ports)) = port_result {
+                    if let Some(host) = app.hosts.iter_mut().find(|h| h.ip == ip) {
+                        host.open_ports = open_ports;
+                    }
+                }
+                app.port_scanning = false;
+                port_scan_rx = None;
+            }
+
             // Check for overlay output (continuous ping / tracert)
             line = async {
                 if let Some(rx) = &mut overlay_rx {
@@ -178,12 +211,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
 
-            // Check for user input
+            // Check for user input — drain all queued events so held keys don't
+            // continue firing after release (one-event-per-tick caused overshoot).
             _ = tokio::time::sleep(timeout) => {
-                if event::poll(Duration::from_millis(0))? {
-                    if let Event::Key(key) = event::read()? {
-                        // Only handle key press events (not release)
-                        if key.kind == KeyEventKind::Press {
+                while event::poll(Duration::from_millis(0))? {
+                    match event::read()? {
+                        Event::Key(key) if key.kind == KeyEventKind::Press => {
                             // Any keypress dismisses a notification message
                             app.export_message = None;
 
@@ -205,8 +238,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     }
                                 }
                                 Some(AppCommand::ScanPortsForSelected) => {
-                                    if let Err(e) = app.scan_ports_for_selected().await {
-                                        app.export_message = Some(format!("Port scan error: {}", e));
+                                    if let Some(rx) = app.start_port_scan_for_selected() {
+                                        port_scan_rx = Some(rx);
                                     }
                                 }
                                 Some(AppCommand::StartContinuousPing(ip)) => {
@@ -218,10 +251,15 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 None => {}
                             }
                         }
+                        Event::Mouse(mouse) => {
+                            handle_mouse_event(mouse, app, last_area, last_table_offset);
+                        }
+                        _ => {}
                     }
                 }
             }
         }
+
     }
 }
 
@@ -347,7 +385,7 @@ fn start_tracert(ip: Ipv4Addr, app: &mut App) -> mpsc::Receiver<String> {
     line_rx
 }
 
-fn draw_ui(f: &mut Frame, app: &App) {
+fn draw_ui(f: &mut Frame, app: &App, table_offset_out: &mut usize) {
     let size = f.area();
     let layout = AppLayout::new(size);
 
@@ -370,12 +408,15 @@ fn draw_ui(f: &mut Frame, app: &App) {
         .selected_ips(&selected_ips);
 
     f.render_stateful_widget(table, layout.hosts_table, &mut table_state);
+    // Capture the scroll offset ratatui computed so mouse clicks map to the right row
+    *table_offset_out = table_state.offset();
 
     // Draw details pane (full mode only)
     if let Some(details_area) = layout.details_pane {
         if app.show_details {
             let details = DetailsPane::new(app.selected_host())
-                .focused(app.focus == Focus::DetailsPane);
+                .focused(app.focus == Focus::DetailsPane)
+                .port_scanning(app.port_scanning);
             f.render_widget(details, details_area);
         }
     }
@@ -722,6 +763,116 @@ fn draw_message(f: &mut Frame, size: Rect, message: &str) {
 
     f.render_widget(msg, area);
 }
+
+fn handle_mouse_event(
+    mouse: crossterm::event::MouseEvent,
+    app: &mut App,
+    area: ratatui::layout::Rect,
+    table_offset: usize,
+) {
+    use input::InputMode;
+
+    // In overlay mode only allow scrolling
+    if app.input_mode == InputMode::OutputOverlay {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                app.overlay_scroll = app.overlay_scroll.saturating_sub(1);
+            }
+            MouseEventKind::ScrollDown => {
+                // clamped to max_scroll during render
+                app.overlay_scroll = app.overlay_scroll.saturating_add(1);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Only handle mouse in Normal mode (help/export overlays are keyboard-driven)
+    if app.input_mode != InputMode::Normal {
+        return;
+    }
+
+    let layout = AppLayout::new(area);
+    let col = mouse.column;
+    let row = mouse.row;
+
+    match mouse.kind {
+        MouseEventKind::ScrollUp => {
+            // Scroll anywhere in the table or details area navigates the host list
+            if mouse_in(layout.hosts_table, col, row)
+                || layout.details_pane.map_or(false, |d| mouse_in(d, col, row))
+            {
+                app.focus = Focus::HostsTable;
+                app.select_previous();
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if mouse_in(layout.hosts_table, col, row)
+                || layout.details_pane.map_or(false, |d| mouse_in(d, col, row))
+            {
+                app.focus = Focus::HostsTable;
+                app.select_next();
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if mouse_in(layout.header, col, row) {
+                app.focus = Focus::RangeInput;
+            } else if mouse_in(layout.hosts_table, col, row) {
+                app.focus = Focus::HostsTable;
+                // border (1 row) + header row (1 row) = data starts at y+2
+                let top = layout.hosts_table.y + 2;
+                let bottom = layout.hosts_table.y + layout.hosts_table.height - 1;
+                if row >= top && row < bottom {
+                    let abs_row = (row - top) as usize + table_offset;
+                    if abs_row < app.filtered_hosts.len() {
+                        app.table_state.select(Some(abs_row));
+                    }
+                }
+            } else if let Some(details_area) = layout.details_pane {
+                if mouse_in(details_area, col, row) {
+                    app.focus = Focus::DetailsPane;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn mouse_in(rect: ratatui::layout::Rect, col: u16, row: u16) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
+
+/// On Windows, crossterm's EnableMouseCapture sends the ANSI ?1000h escape to
+/// stdout, but the ReadConsoleInputW path (which crossterm uses to read events)
+/// only delivers MOUSE_EVENT_RECORD structs when ENABLE_MOUSE_INPUT is set on
+/// the *input* handle via SetConsoleMode. We set it here explicitly so mouse
+/// works regardless of terminal emulator VT mode behaviour.
+#[cfg(windows)]
+fn enable_mouse_input_win32() {
+    use std::ffi::c_void;
+    const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6; // (-10i32) cast to u32
+    const ENABLE_MOUSE_INPUT: u32 = 0x0010;
+    const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+
+    extern "system" {
+        fn GetStdHandle(nStdHandle: u32) -> *mut c_void;
+        fn GetConsoleMode(hConsoleHandle: *mut c_void, lpMode: *mut u32) -> i32;
+        fn SetConsoleMode(hConsoleHandle: *mut c_void, dwMode: u32) -> i32;
+    }
+
+    unsafe {
+        let handle = GetStdHandle(STD_INPUT_HANDLE);
+        if !handle.is_null() && handle as isize != -1 {
+            let mut mode: u32 = 0;
+            if GetConsoleMode(handle, &mut mode) != 0 {
+                SetConsoleMode(handle, mode | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn enable_mouse_input_win32() {}
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::vertical([

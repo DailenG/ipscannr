@@ -14,6 +14,7 @@ use crate::ui::theme::Theme;
 pub struct DetailsPane<'a> {
     host: Option<&'a HostInfo>,
     focused: bool,
+    port_scanning: bool,
 }
 
 impl<'a> DetailsPane<'a> {
@@ -21,11 +22,17 @@ impl<'a> DetailsPane<'a> {
         Self {
             host,
             focused: false,
+            port_scanning: false,
         }
     }
 
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
+        self
+    }
+
+    pub fn port_scanning(mut self, scanning: bool) -> Self {
+        self.port_scanning = scanning;
         self
     }
 }
@@ -118,10 +125,15 @@ impl Widget for DetailsPane<'_> {
         }
 
         // Open Ports
-        if !host.open_ports.is_empty() {
-            lines.push(Line::from(""));
+        lines.push(Line::from(""));
+        if self.port_scanning {
+            lines.push(Line::from(Span::styled("Scanning ports…", Theme::dimmed())));
+        } else if host.open_ports.is_empty() {
+            if host.is_alive {
+                lines.push(Line::from(Span::styled("No open ports found", Theme::dimmed())));
+            }
+        } else {
             lines.push(Line::from(Span::styled("Open Ports:", Theme::header())));
-
             for port in &host.open_ports {
                 let service = get_service_name(*port);
                 lines.push(Line::from(vec![

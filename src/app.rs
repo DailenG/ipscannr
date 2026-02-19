@@ -133,6 +133,10 @@ pub struct App {
     pub overlay_lines: Vec<String>,
     pub overlay_scroll: usize,
     pub overlay_cancel_tx: Option<mpsc::Sender<()>>,
+
+    // Background port scan for the currently selected host
+    port_scan_cancel_tx: Option<mpsc::Sender<()>>,
+    pub port_scanning: bool,
 }
 
 impl App {
@@ -177,6 +181,9 @@ impl App {
             overlay_lines: Vec::new(),
             overlay_scroll: 0,
             overlay_cancel_tx: None,
+
+            port_scan_cancel_tx: None,
+            port_scanning: false,
         }
     }
 
@@ -671,35 +678,23 @@ impl App {
         }
     }
 
-    fn select_next(&mut self) {
+    pub fn select_next(&mut self) {
         if self.filtered_hosts.is_empty() {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i >= self.filtered_hosts.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
+            Some(i) => (i + 1).min(self.filtered_hosts.len() - 1),
             None => 0,
         };
         self.table_state.select(Some(i));
     }
 
-    fn select_previous(&mut self) {
+    pub fn select_previous(&mut self) {
         if self.filtered_hosts.is_empty() {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.filtered_hosts.len() - 1
-                } else {
-                    i - 1
-                }
-            }
+            Some(i) => i.saturating_sub(1),
             None => 0,
         };
         self.table_state.select(Some(i));
@@ -888,35 +883,55 @@ impl App {
                 }
                 self.scan_cancel_tx = None;
 
-                // Sort hosts by IP
-                self.hosts.sort_by_key(|h| h.ip);
+                // Sort: online hosts first, then by IP within each group
+                self.hosts.sort_by(|a, b| {
+                    b.is_alive.cmp(&a.is_alive).then_with(|| a.ip.cmp(&b.ip))
+                });
                 self.update_filtered_hosts();
             }
         }
     }
 
-    pub async fn scan_ports_for_selected(&mut self) -> Result<()> {
-        let Some(host) = self.selected_host() else {
-            return Ok(());
-        };
+    /// Start a background port scan for the currently selected host.
+    /// Cancels any in-progress port scan first. Returns a receiver that
+    /// yields `(ip, open_ports)` when the scan completes.
+    pub fn start_port_scan_for_selected(&mut self) -> Option<mpsc::Receiver<(Ipv4Addr, Vec<u16>)>> {
+        // Cancel any in-progress scan
+        if let Some(tx) = self.port_scan_cancel_tx.take() {
+            let _ = tx.try_send(());
+        }
 
+        let host = self.selected_host()?;
         if !host.is_alive {
-            return Ok(());
+            self.port_scanning = false;
+            return None;
         }
 
         let ip = host.ip;
-        let scanner = PortScanner::new(self.config.port_scan.clone());
-        let results = scanner.scan_ports(ip, COMMON_PORTS).await;
+        let config = self.config.port_scan.clone();
 
-        if let Some(host) = self.selected_host_mut() {
-            host.open_ports = results
-                .into_iter()
-                .filter(|r| r.is_open)
-                .map(|r| r.port)
-                .collect();
-        }
+        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+        let (result_tx, result_rx) = mpsc::channel::<(Ipv4Addr, Vec<u16>)>(1);
 
-        Ok(())
+        self.port_scan_cancel_tx = Some(cancel_tx);
+        self.port_scanning = true;
+
+        tokio::spawn(async move {
+            let scanner = PortScanner::new(config);
+            tokio::select! {
+                _ = cancel_rx.recv() => {}
+                results = scanner.scan_ports(ip, COMMON_PORTS) => {
+                    let open_ports: Vec<u16> = results
+                        .into_iter()
+                        .filter(|r| r.is_open)
+                        .map(|r| r.port)
+                        .collect();
+                    let _ = result_tx.send((ip, open_ports)).await;
+                }
+            }
+        });
+
+        Some(result_rx)
     }
 
     /// Send a Wake-on-LAN magic packet to the selected host's MAC address
