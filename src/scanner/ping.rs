@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use surge_ping::{Client, Config as PingConfig, PingIdentifier, PingSequence, ICMP};
+use surge_ping::{Client, Config as PingConfig, PingIdentifier, PingSequence};
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::timeout;
 
