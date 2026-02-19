@@ -233,6 +233,10 @@ async fn run_app<B: ratatui::backend::Backend>(
             // Check for user input — drain all queued events so held keys don't
             // continue firing after release (one-event-per-tick caused overshoot).
             _ = tokio::time::sleep(timeout) => {
+                // On Windows, query the physical key state directly — this is more
+                // reliable than the Kitty keyboard protocol on the Win32 console path.
+                app.show_keybindings = is_left_ctrl_held();
+
                 while event::poll(Duration::from_millis(0))? {
                     match event::read()? {
                         // Left Ctrl alone: show/hide keybindings popup while held
@@ -985,6 +989,23 @@ fn enable_mouse_input_win32() {
 
 #[cfg(not(windows))]
 fn enable_mouse_input_win32() {}
+
+/// Poll whether Left Ctrl is physically held right now using Win32 GetAsyncKeyState.
+/// This sidesteps the Kitty keyboard protocol entirely — no terminal capability needed.
+/// The high-order bit of the return value is set when the key is down.
+#[cfg(windows)]
+fn is_left_ctrl_held() -> bool {
+    const VK_LCONTROL: i32 = 0xA2;
+    extern "system" {
+        fn GetAsyncKeyState(vKey: i32) -> i16;
+    }
+    unsafe { (GetAsyncKeyState(VK_LCONTROL) as u16) & 0x8000 != 0 }
+}
+
+#[cfg(not(windows))]
+fn is_left_ctrl_held() -> bool {
+    false
+}
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::vertical([
