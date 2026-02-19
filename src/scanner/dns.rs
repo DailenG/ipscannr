@@ -29,7 +29,9 @@ impl DnsResolver {
             }
         }
 
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let Ok(_permit) = self.semaphore.acquire().await else {
+            return None;
+        };
 
         // Perform DNS lookup in blocking task
         let result = tokio::task::spawn_blocking(move || {

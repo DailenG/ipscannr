@@ -222,6 +222,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                     None => {
                         // Task finished — keep overlay open for reading, title updated
                         overlay_rx = None;
+                        app.overlay_cancel_tx = None;
                         if app.input_mode == InputMode::OutputOverlay {
                             let done_title = format!("{} [Done — Esc to close]", app.overlay_title);
                             app.overlay_title = done_title;
@@ -392,7 +393,13 @@ fn start_tracert(ip: Ipv4Addr, app: &mut App) -> mpsc::Receiver<String> {
             }
         };
 
-        let stdout = child.stdout.take().expect("stdout piped");
+        let Some(stdout) = child.stdout.take() else {
+            let _ = line_tx
+                .send("Failed to read tracert output stream".to_string())
+                .await;
+            let _ = child.kill().await;
+            return;
+        };
         let mut reader = BufReader::new(stdout).lines();
 
         loop {

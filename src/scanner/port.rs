@@ -112,7 +112,15 @@ impl PortScanner {
 
     /// Scan a single port on a host
     pub async fn scan_port(&self, ip: Ipv4Addr, port: u16) -> PortResult {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let permit = self.semaphore.acquire().await;
+        if permit.is_err() {
+            return PortResult {
+                port,
+                is_open: false,
+                service: get_service_name(port),
+            };
+        }
+        let _permit = permit.ok();
 
         let addr = SocketAddr::new(IpAddr::V4(ip), port);
 

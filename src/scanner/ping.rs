@@ -62,7 +62,16 @@ impl Pinger {
 
     /// Ping a single host using TCP connect (more reliable on Windows without admin)
     pub async fn ping(&self, ip: Ipv4Addr) -> PingResult {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let permit = self.semaphore.acquire().await;
+        if permit.is_err() {
+            return PingResult {
+                ip,
+                is_alive: false,
+                rtt: None,
+                method: PingMethod::TcpSyn,
+            };
+        }
+        let _permit = permit.ok();
 
         // Try TCP connect to common ports (more reliable without raw sockets)
         let ports = [80, 443, 22, 445, 139, 135, 3389];
