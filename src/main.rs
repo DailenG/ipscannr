@@ -250,9 +250,17 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     || key.kind == KeyEventKind::Repeat;
                         }
                         Event::Key(key) if key.kind == KeyEventKind::Press => {
-                            // Any keypress dismisses notification message and keybindings popup
-                            app.export_message = None;
-                            app.show_keybindings = false;
+                            // Skip modifier-only keys (Ctrl, Alt, Shift alone don't dismiss popups)
+                            let is_modifier_only = matches!(
+                                key.code,
+                                KeyCode::Modifier(_)
+                            );
+                            
+                            if !is_modifier_only {
+                                // Any non-modifier keypress dismisses notification message and keybindings popup
+                                app.export_message = None;
+                                app.show_keybindings = false;
+                            }
 
                             let action = handle_key(key, app.input_mode);
                             match app.handle_action(action)? {
