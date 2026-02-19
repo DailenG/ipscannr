@@ -299,6 +299,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 
 /// Spawn a continuous ping task and return the output channel receiver
 fn start_continuous_ping(ip: Ipv4Addr, app: &mut App) -> mpsc::Receiver<String> {
+    cancel_existing_overlay_task(app);
     app.overlay_title = format!("Continuous Ping — {}", ip);
     app.overlay_lines.clear();
     app.overlay_scroll = 0;
@@ -363,8 +364,15 @@ fn start_continuous_ping(ip: Ipv4Addr, app: &mut App) -> mpsc::Receiver<String> 
     line_rx
 }
 
+fn cancel_existing_overlay_task(app: &mut App) {
+    if let Some(tx) = app.overlay_cancel_tx.take() {
+        let _ = tx.try_send(());
+    }
+}
+
 /// Spawn a tracert process and return the output channel receiver
 fn start_tracert(ip: Ipv4Addr, app: &mut App) -> mpsc::Receiver<String> {
+    cancel_existing_overlay_task(app);
     app.overlay_title = format!("Tracert — {}", ip);
     app.overlay_lines.clear();
     app.overlay_scroll = 0;

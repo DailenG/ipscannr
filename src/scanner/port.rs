@@ -227,3 +227,25 @@ pub fn parse_ports(input: &str) -> Vec<u16> {
     ports.dedup();
     ports
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ports;
+
+    #[test]
+    fn parse_ports_handles_single_and_list_values() {
+        assert_eq!(parse_ports("80"), vec![80]);
+        assert_eq!(parse_ports("443,80,443"), vec![80, 443]);
+    }
+
+    #[test]
+    fn parse_ports_handles_ranges_and_mixed_input() {
+        assert_eq!(parse_ports("20-22"), vec![20, 21, 22]);
+        assert_eq!(parse_ports("80,100-102,443"), vec![80, 100, 101, 102, 443]);
+    }
+
+    #[test]
+    fn parse_ports_ignores_invalid_segments() {
+        assert_eq!(parse_ports("abc,80,1-two,90"), vec![80, 90]);
+    }
+}
