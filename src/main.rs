@@ -13,11 +13,15 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+        KeyboardEnhancementFlags, ModifierKeyCode, MouseButton, MouseEventKind,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -59,6 +63,18 @@ async fn main() -> Result<()> {
     // ENABLE_MOUSE_INPUT on the *input* handle — the ANSI ?1000h sequence alone
     // is not sufficient in all terminal configurations.
     enable_mouse_input_win32();
+    // Enable keyboard enhancement so Left Ctrl alone fires press/release events.
+    // Falls back silently on terminals that don't support the Kitty protocol.
+    let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhanced {
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
+        );
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -73,6 +89,9 @@ async fn main() -> Result<()> {
     let result = run_app(&mut terminal, &mut app, cli.scan).await;
 
     // Restore terminal
+    if keyboard_enhanced {
+        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -216,9 +235,19 @@ async fn run_app<B: ratatui::backend::Backend>(
             _ = tokio::time::sleep(timeout) => {
                 while event::poll(Duration::from_millis(0))? {
                     match event::read()? {
+                        // Left Ctrl alone: show/hide keybindings popup while held
+                        Event::Key(key)
+                            if key.code
+                                == KeyCode::Modifier(ModifierKeyCode::LeftControl) =>
+                        {
+                            app.show_keybindings =
+                                key.kind == KeyEventKind::Press
+                                    || key.kind == KeyEventKind::Repeat;
+                        }
                         Event::Key(key) if key.kind == KeyEventKind::Press => {
-                            // Any keypress dismisses a notification message
+                            // Any keypress dismisses notification message and keybindings popup
                             app.export_message = None;
+                            app.show_keybindings = false;
 
                             let action = handle_key(key, app.input_mode);
                             match app.handle_action(action)? {
@@ -432,6 +461,11 @@ fn draw_ui(f: &mut Frame, app: &App, table_offset_out: &mut usize) {
         _ => {}
     }
 
+    // Contextual keybindings popup (shown while Left Ctrl is held)
+    if app.show_keybindings {
+        draw_keybindings_popup(f, app, size);
+    }
+
     // Draw export/notification message if present
     if let Some(msg) = &app.export_message {
         draw_message(f, size, msg);
@@ -491,41 +525,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, compact: bool) {
-    let filter_label = format!("Filter:{}", app.filter_mode.label());
-
-    // Context-aware hotkeys based on focused pane
-    let hotkeys: Vec<(&str, &str)> = if app.focus == Focus::DetailsPane {
-        vec![
-            ("W", "WOL"),
-            ("P", "Ports"),
-            ("C", "Ping"),
-            ("T", "Tracert"),
-            ("A", "Save"),
-            ("Tab", "Switch"),
-            ("Q", "Quit"),
-        ]
-    } else if compact {
-        vec![
-            ("S", "Scan"),
-            ("R", "Range"),
-            ("F", filter_label.as_str()),
-            ("?", "Help"),
-            ("Q", "Quit"),
-        ]
-    } else {
-        vec![
-            ("S", "Scan"),
-            ("R", "Range"),
-            ("P", "Ports"),
-            ("F", filter_label.as_str()),
-            ("E", "Export"),
-            ("D", "Details"),
-            ("?", "Help"),
-            ("Q", "Quit"),
-        ]
-    };
-
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, _compact: bool) {
     // Show multi-select count when any hosts are selected
     let selection_prefix = if !app.selected_hosts.is_empty() {
         format!("[{}✓] ", app.selected_hosts.len())
@@ -534,7 +534,6 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, compact: bool) {
     };
 
     let online_count = app.hosts.iter().filter(|h| h.is_alive).count();
-    // Keep this short — the right slot in the status bar is only ~30 chars wide
     let status_right = format!(
         "{}{} online | {}",
         selection_prefix,
@@ -542,8 +541,10 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, compact: bool) {
         app.status_text()
     );
 
+    // Left side: dim affordance hint so users know shortcuts exist.
+    // Hotkeys are revealed by holding Left Ctrl; full help via ?
     let status_bar = StatusBar::new()
-        .hotkeys(hotkeys)
+        .status_left("^ Ctrl  shortcuts  |  ? Help")
         .status_right(status_right);
 
     f.render_widget(status_bar, area);
@@ -743,6 +744,117 @@ fn draw_output_overlay(f: &mut Frame, app: &App, size: Rect) {
         Theme::dimmed(),
     )));
     f.render_widget(hint, hint_area);
+}
+
+fn draw_keybindings_popup(f: &mut Frame, app: &App, size: Rect) {
+    // Build context-sensitive rows of (key, description) pairs
+    type Row = Vec<(&'static str, &'static str)>;
+    let (context, rows): (&str, Vec<Row>) = match app.input_mode {
+        InputMode::EditingRange => (
+            "Editing Range",
+            vec![vec![
+                ("[Enter]", "Apply"),
+                ("[Esc]", "Cancel"),
+                ("[←/→]", "Move cursor"),
+                ("[Tab]", "Edit ports"),
+            ]],
+        ),
+        InputMode::EditingPorts => (
+            "Editing Ports",
+            vec![vec![
+                ("[Enter]", "Apply"),
+                ("[Esc]", "Cancel"),
+                ("[←/→]", "Move cursor"),
+            ]],
+        ),
+        InputMode::OutputOverlay => (
+            "Output View",
+            vec![vec![("[Esc]", "Close"), ("[↑/↓]", "Scroll")]],
+        ),
+        InputMode::Normal => match app.focus {
+            Focus::RangeInput => (
+                "Range / Scan",
+                vec![vec![
+                    ("[S]", "Scan"),
+                    ("[R]", "Edit range"),
+                    ("[P]", "Edit ports"),
+                    ("[F]", "Filter"),
+                    ("[Tab]", "Next pane"),
+                    ("[Q]", "Quit"),
+                ]],
+            ),
+            Focus::HostsTable => (
+                "Hosts Table",
+                vec![
+                    vec![
+                        ("[↑/↓][j/k]", "Navigate"),
+                        ("[PgUp/PgDn]", "Jump 10"),
+                        ("[Home/End]", "First/last"),
+                        ("[Enter]", "Details"),
+                        ("[Space]", "Select"),
+                    ],
+                    vec![
+                        ("[S]", "Scan"),
+                        ("[F]", "Filter"),
+                        ("[E]", "Export"),
+                        ("[D]", "Details pane"),
+                        ("[Tab]", "Next pane"),
+                        ("[Q]", "Quit"),
+                    ],
+                ],
+            ),
+            Focus::DetailsPane => (
+                "Host Details",
+                vec![
+                    vec![
+                        ("[W]", "Wake-on-LAN"),
+                        ("[P]", "Scan ports"),
+                        ("[C]", "Ping"),
+                        ("[T]", "Tracert"),
+                        ("[A]", "Save"),
+                    ],
+                    vec![("[Tab]", "Next pane"), ("[Q]", "Quit")],
+                ],
+            ),
+        },
+        // Help/Exporting overlays are already keyboard-driven; no extra popup needed
+        _ => return,
+    };
+
+    // Build ratatui text lines: one header + one per row
+    let mut text_lines = vec![Line::from(Span::styled(context, Theme::title()))];
+    for row in &rows {
+        let mut spans: Vec<Span> = Vec::new();
+        for (i, (key, desc)) in row.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw("   "));
+            }
+            spans.push(Span::styled(*key, Theme::hotkey()));
+            spans.push(Span::styled(format!(" {}", desc), Theme::hotkey_desc()));
+        }
+        text_lines.push(Line::from(spans));
+    }
+
+    // Height: top border + context label + one line per row + bottom border
+    let popup_height = (text_lines.len() as u16) + 2;
+    let popup_area = Rect {
+        x: 0,
+        y: size.height.saturating_sub(popup_height),
+        width: size.width,
+        height: popup_height.min(size.height),
+    };
+
+    f.render_widget(Clear, popup_area);
+    let popup = Paragraph::new(text_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Theme::border_focused())
+                .title(" Shortcuts ")
+                .title_style(Theme::title()),
+        )
+        .style(Theme::default());
+    f.render_widget(popup, popup_area);
 }
 
 fn draw_message(f: &mut Frame, size: Rect, message: &str) {

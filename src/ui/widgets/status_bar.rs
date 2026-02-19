@@ -82,9 +82,14 @@ impl Widget for StatusBar<'_> {
         ])
         .split(area);
 
-        // Render hotkeys on the left
-        let hotkey_line = Line::from(hotkey_spans);
-        buf.set_line(chunks[0].x, chunks[0].y, &hotkey_line, chunks[0].width);
+        // Render status_left (dim hint) if set, otherwise render hotkeys
+        if let Some(left) = self.status_left {
+            let left_line = Line::from(Span::styled(left, Theme::dimmed()));
+            buf.set_line(chunks[0].x, chunks[0].y, &left_line, chunks[0].width);
+        } else {
+            let hotkey_line = Line::from(hotkey_spans);
+            buf.set_line(chunks[0].x, chunks[0].y, &hotkey_line, chunks[0].width);
+        }
 
         // Render status on the right
         if let Some(status) = self.status_right {

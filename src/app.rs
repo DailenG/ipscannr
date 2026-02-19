@@ -137,6 +137,9 @@ pub struct App {
     // Background port scan for the currently selected host
     port_scan_cancel_tx: Option<mpsc::Sender<()>>,
     pub port_scanning: bool,
+
+    // True while the user holds Left Ctrl — shows contextual keybindings popup
+    pub show_keybindings: bool,
 }
 
 impl App {
@@ -184,6 +187,8 @@ impl App {
 
             port_scan_cancel_tx: None,
             port_scanning: false,
+
+            show_keybindings: false,
         }
     }
 
