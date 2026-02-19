@@ -22,6 +22,7 @@ pub enum Action {
     ToggleSelect, // Spacebar: multi-select hosts (or resume paused scan)
     Cancel,
     SwitchPane,
+    SwitchPaneReverse,
     Delete,
     Backspace,
     Character(char),
@@ -82,6 +83,7 @@ fn handle_normal_mode(key: KeyEvent) -> Action {
         KeyCode::End => Action::NavigateEnd,
         KeyCode::Enter => Action::Select,
         KeyCode::Tab => Action::SwitchPane,
+        KeyCode::BackTab => Action::SwitchPaneReverse,
         KeyCode::Backspace => Action::Backspace, // Enter edit mode from range pane
         KeyCode::Char(c) => Action::Character(c), // Pass unbound chars through (digits, punctuation, etc.)
         _ => Action::None,
