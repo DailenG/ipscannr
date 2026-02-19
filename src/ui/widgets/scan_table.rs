@@ -65,7 +65,7 @@ impl<'a> StatefulWidget for ScanTable<'a> {
             .map(|host| {
                 let is_selected = self
                     .selected_ips
-                    .map_or(false, |s| s.contains(&host.ip));
+                    .is_some_and(|s| s.contains(&host.ip));
 
                 let ip_cell = if is_selected {
                     Line::from(vec![

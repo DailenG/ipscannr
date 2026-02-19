@@ -954,7 +954,7 @@ impl App {
         // Parse MAC bytes (supports XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX)
         let parts: Vec<u8> = mac
             .address
-            .split(|c| c == ':' || c == '-')
+            .split([':', '-'])
             .filter_map(|s| u8::from_str_radix(s, 16).ok())
             .collect();
 

@@ -931,7 +931,7 @@ fn handle_mouse_event(
         MouseEventKind::ScrollUp => {
             // Scroll anywhere in the table or details area navigates the host list
             if mouse_in(layout.hosts_table, col, row)
-                || layout.details_pane.map_or(false, |d| mouse_in(d, col, row))
+                || layout.details_pane.is_some_and(|d| mouse_in(d, col, row))
             {
                 app.focus = Focus::HostsTable;
                 app.select_previous();
@@ -939,7 +939,7 @@ fn handle_mouse_event(
         }
         MouseEventKind::ScrollDown => {
             if mouse_in(layout.hosts_table, col, row)
-                || layout.details_pane.map_or(false, |d| mouse_in(d, col, row))
+                || layout.details_pane.is_some_and(|d| mouse_in(d, col, row))
             {
                 app.focus = Focus::HostsTable;
                 app.select_next();

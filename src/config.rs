@@ -8,7 +8,6 @@ pub struct Config {
     pub default_range: String,
     pub ping: PingerConfig,
     pub port_scan: PortScannerConfig,
-    pub scan_ports_by_default: bool,
     pub resolve_hostnames: bool,
     pub detect_mac: bool,
 }
@@ -26,7 +25,6 @@ impl Default for Config {
                 timeout: Duration::from_millis(500),
                 concurrent_limit: 50,
             },
-            scan_ports_by_default: false,
             resolve_hostnames: true,
             detect_mac: true,
         }
