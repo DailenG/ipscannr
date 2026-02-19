@@ -463,6 +463,17 @@ impl App {
                 };
                 Ok(None)
             }
+            Action::Character(c) => {
+                // Typing while the range pane is focused auto-enters edit mode
+                if self.focus == Focus::RangeInput {
+                    self.input_mode = InputMode::EditingRange;
+                    self.adapter_index = None;
+                    self.range_cursor = self.range_input.len();
+                    self.range_input.insert(self.range_cursor, c);
+                    self.range_cursor += 1;
+                }
+                Ok(None)
+            }
             _ => Ok(None),
         }
     }

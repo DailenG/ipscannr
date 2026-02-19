@@ -181,6 +181,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                     if let Event::Key(key) = event::read()? {
                         // Only handle key press events (not release)
                         if key.kind == KeyEventKind::Press {
+                            // Any keypress dismisses a notification message
+                            app.export_message = None;
+
                             let action = handle_key(key, app.input_mode);
                             match app.handle_action(action)? {
                                 Some(AppCommand::Quit) => return Ok(()),

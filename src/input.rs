@@ -83,6 +83,7 @@ fn handle_normal_mode(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::Select,
         KeyCode::Tab => Action::SwitchPane,
         KeyCode::Backspace => Action::Backspace, // Enter edit mode from range pane
+        KeyCode::Char(c) => Action::Character(c), // Pass unbound chars through (digits, punctuation, etc.)
         _ => Action::None,
     }
 }
