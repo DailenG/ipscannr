@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["ipscannr contributors"]
 license = "MIT"
 description = "A terminal-based IP scanner with adaptive TUI - hack the planet!"
-repository = "https://github.com/yourusername/ipscannr"
+repository = "https://github.com/DailenG/ipscannr"
 keywords = ["network", "scanner", "ip", "tui", "terminal"]
 categories = ["command-line-utilities", "network-programming"]
 
