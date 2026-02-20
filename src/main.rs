@@ -368,7 +368,7 @@ fn start_continuous_ping(ip: Ipv4Addr, app: &mut App) -> mpsc::Receiver<String> 
                 let addr =
                     std::net::SocketAddr::new(std::net::IpAddr::V4(ip), port);
                 let result = tokio::time::timeout(
-                    tokio::time::Duration::from_millis(1000),
+                    tokio::time::Duration::from_millis(300),
                     tokio::net::TcpStream::connect(addr),
                 )
                 .await;

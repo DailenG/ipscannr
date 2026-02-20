@@ -18,8 +18,8 @@ impl Default for Config {
         Self {
             default_range: "192.168.1.0/24".to_string(),
             ping: PingerConfig {
-                timeout: Duration::from_millis(1000),
-                retries: 1,
+                timeout: Duration::from_millis(300),
+                retries: 0,
                 concurrent_limit: 100,
             },
             port_scan: PortScannerConfig {

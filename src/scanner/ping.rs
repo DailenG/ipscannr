@@ -64,8 +64,8 @@ pub struct PingerConfig {
 impl Default for PingerConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_millis(1000),
-            retries: 1,
+            timeout: Duration::from_millis(300),
+            retries: 0,
             concurrent_limit: 100,
         }
     }
