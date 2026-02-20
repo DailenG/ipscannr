@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 use app::{App, AppCommand, Focus, ScanEvent};
 use config::Config;
 use input::{handle_key, InputMode};
-use ui::{AppLayout, DetailsPane, InputBar, ProgressBar, ScanTable, StatusBar, Theme};
+use ui::{AppLayout, Compat, DetailsPane, InputBar, ProgressBar, ScanTable, StatusBar, Theme};
 
 #[derive(Parser)]
 #[command(name = "ipscannr")]
@@ -49,6 +49,11 @@ struct Cli {
     /// Start scanning immediately
     #[arg(short, long)]
     scan: bool,
+
+    /// ASCII-only compatibility mode for limited console environments
+    /// (e.g. RMM consoles that cannot render Unicode box-drawing characters)
+    #[arg(long)]
+    compat: bool,
 }
 
 #[tokio::main]
@@ -58,14 +63,23 @@ async fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    // On Windows, crossterm reads mouse via ReadConsoleInputW which requires
-    // ENABLE_MOUSE_INPUT on the *input* handle — the ANSI ?1000h sequence alone
-    // is not sufficient in all terminal configurations.
-    enable_mouse_input_win32();
+    if cli.compat {
+        execute!(stdout, EnterAlternateScreen)?;
+    } else {
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        // On Windows, crossterm reads mouse via ReadConsoleInputW which requires
+        // ENABLE_MOUSE_INPUT on the *input* handle — the ANSI ?1000h sequence alone
+        // is not sufficient in all terminal configurations.
+        enable_mouse_input_win32();
+    }
     // Enable keyboard enhancement so Left Ctrl alone fires press/release events.
     // Falls back silently on terminals that don't support the Kitty protocol.
-    let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    // Skip in compat mode: RMM consoles don't support the Kitty protocol.
+    let keyboard_enhanced = if cli.compat {
+        false
+    } else {
+        supports_keyboard_enhancement().unwrap_or(false)
+    };
     if keyboard_enhanced {
         let _ = execute!(
             stdout,
@@ -84,6 +98,7 @@ async fn main() -> Result<()> {
     if let Some(range) = cli.range {
         config.default_range = range;
     }
+    config.compat = cli.compat;
     let mut app = App::new(config);
 
     // Run app
@@ -94,11 +109,15 @@ async fn main() -> Result<()> {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    if cli.compat {
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    } else {
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
+    }
     terminal.show_cursor()?;
 
     if let Err(e) = result {
@@ -240,8 +259,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                 // GetAsyncKeyState reads the hardware key state directly and works
                 // in both legacy console and Windows Terminal (ConPTY) regardless of
                 // which window the OS considers "foreground".
+                // Skipped in compat mode: Ctrl detection doesn't work in RMM consoles.
                 #[cfg(windows)]
-                {
+                if !app.compat {
                     app.show_keybindings = is_left_ctrl_held();
                 }
 
@@ -455,7 +475,8 @@ fn draw_ui(f: &mut Frame, app: &App, table_offset_out: &mut usize) {
     let layout = AppLayout::new(size);
 
     // Clear with background color
-    let bg_block = Block::default().style(Theme::default());
+    let bg_style = if app.compat { Compat::default() } else { Theme::default() };
+    let bg_block = Block::default().style(bg_style);
     f.render_widget(bg_block, size);
 
     // Draw header (input bar)
@@ -470,7 +491,8 @@ fn draw_ui(f: &mut Frame, app: &App, table_offset_out: &mut usize) {
     let table = ScanTable::new(&filtered_hosts)
         .show_rtt(!layout.is_compact())
         .focused(app.focus == Focus::HostsTable)
-        .selected_ips(&selected_ips);
+        .selected_ips(&selected_ips)
+        .compat(app.compat);
 
     f.render_stateful_widget(table, layout.hosts_table, &mut table_state);
     // Capture the scroll offset ratatui computed so mouse clicks map to the right row
@@ -481,7 +503,8 @@ fn draw_ui(f: &mut Frame, app: &App, table_offset_out: &mut usize) {
         if app.show_details {
             let details = DetailsPane::new(app.selected_host())
                 .focused(app.focus == Focus::DetailsPane)
-                .port_scanning(app.port_scanning);
+                .port_scanning(app.port_scanning)
+                .compat(app.compat);
             f.render_widget(details, details_area);
         }
     }
@@ -491,20 +514,21 @@ fn draw_ui(f: &mut Frame, app: &App, table_offset_out: &mut usize) {
 
     // Draw overlays
     match app.input_mode {
-        InputMode::Help => draw_help_overlay(f, size),
+        InputMode::Help => draw_help_overlay(f, app, size),
         InputMode::Exporting => draw_export_overlay(f, app, size),
         InputMode::OutputOverlay => draw_output_overlay(f, app, size),
         _ => {}
     }
 
-    // Contextual keybindings popup (shown while Left Ctrl is held)
-    if app.show_keybindings {
+    // Contextual keybindings popup (shown while Left Ctrl is held).
+    // Skipped in compat mode: Ctrl detection doesn't work in RMM consoles.
+    if app.show_keybindings && !app.compat {
         draw_keybindings_popup(f, app, size);
     }
 
     // Draw export/notification message if present
     if let Some(msg) = &app.export_message {
-        draw_message(f, size, msg);
+        draw_message(f, app, size, msg);
     }
 }
 
@@ -528,23 +552,33 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let range_focused = app.focus == Focus::RangeInput || app.input_mode == InputMode::EditingRange;
     let range_bar = InputBar::new(&range_title, &app.range_input)
         .cursor_position(app.range_cursor)
-        .focused(range_focused);
+        .focused(range_focused)
+        .compat(app.compat);
     f.render_widget(range_bar, chunks[0]);
 
     // Progress / Status
     let progress_area = chunks[1];
-    let progress_block = Block::default()
+    let (pb_border_style, pb_title_style) = if app.compat {
+        (Compat::border(), Compat::title())
+    } else {
+        (Theme::border(), Theme::title())
+    };
+    let mut progress_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Theme::border())
+        .border_style(pb_border_style)
         .title(" Status ")
-        .title_style(Theme::title());
+        .title_style(pb_title_style);
+    if app.compat {
+        progress_block = progress_block.border_set(Compat::BORDERS);
+    }
 
     let inner = progress_block.inner(progress_area);
     f.render_widget(progress_block, progress_area);
 
     if app.scan_state == app::ScanState::Scanning || app.scan_state == app::ScanState::Paused {
         let progress = ProgressBar::new(app.progress())
-            .show_percentage(true);
+            .show_percentage(true)
+            .compat(app.compat);
         f.render_widget(progress, inner);
     } else {
         // Show full host summary after scan completes or while showing cached results
@@ -556,15 +590,17 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             }
             _ => app.status_text(),
         };
-        let status = Paragraph::new(text).style(Theme::default());
+        let st_style = if app.compat { Compat::default() } else { Theme::default() };
+        let status = Paragraph::new(text).style(st_style);
         f.render_widget(status, inner);
     }
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, _compact: bool) {
     // Show multi-select count when any hosts are selected
+    let sel_sym = if app.compat { "x" } else { "✓" };
     let selection_prefix = if !app.selected_hosts.is_empty() {
-        format!("[{}✓] ", app.selected_hosts.len())
+        format!("[{}{}] ", app.selected_hosts.len(), sel_sym)
     } else {
         String::new()
     };
@@ -578,105 +614,142 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect, _compact: bool) {
     );
 
     // Left side: dim affordance hint so users know shortcuts exist.
-    // Hotkeys are revealed by holding Left Ctrl; full help via ?
+    // In compat mode, skip the Ctrl hint (Ctrl popup is disabled in compat).
+    let left_hint = if app.compat {
+        "? Help"
+    } else {
+        "^ Ctrl  shortcuts  |  ? Help"
+    };
     let status_bar = StatusBar::new()
-        .status_left("^ Ctrl  shortcuts  |  ? Help")
+        .compat(app.compat)
+        .status_left(left_hint)
         .status_right(status_right);
 
     f.render_widget(status_bar, area);
 }
 
-fn draw_help_overlay(f: &mut Frame, size: Rect) {
+fn draw_help_overlay(f: &mut Frame, app: &App, size: Rect) {
     let area = centered_rect(62, 85, size);
 
     f.render_widget(Clear, area);
 
+    let (title_style, hotkey_style, dimmed_style, default_style, border_style) = if app.compat {
+        (Compat::title(), Compat::hotkey(), Compat::dimmed(), Compat::default(), Compat::border_focused())
+    } else {
+        (Theme::title(), Theme::hotkey(), Theme::dimmed(), Theme::default(), Theme::border_focused())
+    };
+
+    let (sec_scan, sec_nav, sec_sel, sec_det, title_sep, nav_arrow, export_dash) = if app.compat {
+        (
+            "-- Scanning ---------------------------",
+            "-- Navigation -------------------------",
+            "-- Selection & Export -----------------",
+            "-- Host Details (Details pane) --------",
+            "IPSCANNR - Keyboard Shortcuts",
+            "[^/v] or [j/k]",
+            "Export - all hosts, or selected subset",
+        )
+    } else {
+        (
+            "── Scanning ──────────────────────",
+            "── Navigation ────────────────────",
+            "── Selection & Export ────────────",
+            "── Host Details (Details pane) ───",
+            "IPSCANNR — Keyboard Shortcuts",
+            "[↑/↓] or [j/k]",
+            "Export — all hosts, or selected subset",
+        )
+    };
+
     let help_text = vec![
-        Line::from(Span::styled("IPSCANNR — Keyboard Shortcuts", Theme::title())),
+        Line::from(Span::styled(title_sep, title_style)),
         Line::from(""),
-        Line::from(Span::styled("── Scanning ──────────────────────", Theme::dimmed())),
+        Line::from(Span::styled(sec_scan, dimmed_style)),
         Line::from(vec![
-            Span::styled("[S]", Theme::hotkey()),
+            Span::styled("[S]", hotkey_style),
             Span::raw(" Start scan  "),
-            Span::styled("[X]", Theme::hotkey()),
+            Span::styled("[X]", hotkey_style),
             Span::raw(" Stop/pause  "),
-            Span::styled("[Space]", Theme::hotkey()),
+            Span::styled("[Space]", hotkey_style),
             Span::raw(" Resume"),
         ]),
         Line::from(vec![
-            Span::styled("[R]", Theme::hotkey()),
+            Span::styled("[R]", hotkey_style),
             Span::raw(" Edit IP range  "),
-            Span::styled("[P]", Theme::hotkey()),
+            Span::styled("[P]", hotkey_style),
             Span::raw(" Configure ports"),
         ]),
         Line::from(vec![
-            Span::styled("[F]", Theme::hotkey()),
+            Span::styled("[F]", hotkey_style),
             Span::raw(" Toggle filter (All / Online)"),
         ]),
         Line::from(""),
-        Line::from(Span::styled("── Navigation ────────────────────", Theme::dimmed())),
+        Line::from(Span::styled(sec_nav, dimmed_style)),
         Line::from(vec![
-            Span::styled("[↑/↓] or [j/k]", Theme::hotkey()),
+            Span::styled(nav_arrow, hotkey_style),
             Span::raw(" Navigate rows"),
         ]),
         Line::from(vec![
-            Span::styled("[PgUp/PgDn]", Theme::hotkey()),
+            Span::styled("[PgUp/PgDn]", hotkey_style),
             Span::raw(" Jump 10 rows  "),
-            Span::styled("[Home/End]", Theme::hotkey()),
+            Span::styled("[Home/End]", hotkey_style),
             Span::raw(" First/last"),
         ]),
         Line::from(vec![
-            Span::styled("[Tab]", Theme::hotkey()),
+            Span::styled("[Tab]", hotkey_style),
             Span::raw(" Switch panes"),
         ]),
         Line::from(""),
-        Line::from(Span::styled("── Selection & Export ────────────", Theme::dimmed())),
+        Line::from(Span::styled(sec_sel, dimmed_style)),
         Line::from(vec![
-            Span::styled("[Space]", Theme::hotkey()),
+            Span::styled("[Space]", hotkey_style),
             Span::raw(" Toggle host selection (multi-select)"),
         ]),
         Line::from(vec![
-            Span::styled("[E]", Theme::hotkey()),
-            Span::raw(" Export — all hosts, or selected subset"),
+            Span::styled("[E]", hotkey_style),
+            Span::raw(format!(" {}", export_dash)),
         ]),
         Line::from(""),
-        Line::from(Span::styled("── Host Details (Details pane) ───", Theme::dimmed())),
+        Line::from(Span::styled(sec_det, dimmed_style)),
         Line::from(vec![
-            Span::styled("[W]", Theme::hotkey()),
+            Span::styled("[W]", hotkey_style),
             Span::raw(" Wake-on-LAN  "),
-            Span::styled("[P]", Theme::hotkey()),
+            Span::styled("[P]", hotkey_style),
             Span::raw(" Scan ports"),
         ]),
         Line::from(vec![
-            Span::styled("[C]", Theme::hotkey()),
+            Span::styled("[C]", hotkey_style),
             Span::raw(" Continuous ping  "),
-            Span::styled("[T]", Theme::hotkey()),
+            Span::styled("[T]", hotkey_style),
             Span::raw(" Tracert"),
         ]),
         Line::from(vec![
-            Span::styled("[A]", Theme::hotkey()),
+            Span::styled("[A]", hotkey_style),
             Span::raw(" Save host to file  "),
-            Span::styled("[D]", Theme::hotkey()),
+            Span::styled("[D]", hotkey_style),
             Span::raw(" Toggle details pane"),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Q] or [Ctrl+C]", Theme::hotkey()),
+            Span::styled("[Q] or [Ctrl+C]", hotkey_style),
             Span::raw(" Quit"),
         ]),
         Line::from(""),
-        Line::from(Span::styled("Press any key to close", Theme::dimmed())),
+        Line::from(Span::styled("Press any key to close", dimmed_style)),
     ];
 
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(" Help ")
+        .title_style(title_style);
+    if app.compat {
+        block = block.border_set(Compat::BORDERS);
+    }
+
     let help = Paragraph::new(help_text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Theme::border_focused())
-                .title(" Help ")
-                .title_style(Theme::title()),
-        )
-        .style(Theme::default())
+        .block(block)
+        .style(default_style)
         .wrap(Wrap { trim: false });
 
     f.render_widget(help, area);
@@ -687,6 +760,12 @@ fn draw_export_overlay(f: &mut Frame, app: &App, size: Rect) {
 
     f.render_widget(Clear, area);
 
+    let (title_style, hotkey_style, dimmed_style, default_style, border_style) = if app.compat {
+        (Compat::title(), Compat::hotkey(), Compat::dimmed(), Compat::default(), Compat::border_focused())
+    } else {
+        (Theme::title(), Theme::hotkey(), Theme::dimmed(), Theme::default(), Theme::border_focused())
+    };
+
     let scope = if app.selected_hosts.is_empty() {
         format!("All {} hosts", app.hosts.len())
     } else {
@@ -694,37 +773,40 @@ fn draw_export_overlay(f: &mut Frame, app: &App, size: Rect) {
     };
 
     let text = vec![
-        Line::from(Span::styled("Export Results", Theme::title())),
+        Line::from(Span::styled("Export Results", title_style)),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Scope: ", Theme::dimmed()),
-            Span::styled(scope, Theme::default()),
+            Span::styled("Scope: ", dimmed_style),
+            Span::styled(scope, default_style),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[C]", Theme::hotkey()),
+            Span::styled("[C]", hotkey_style),
             Span::raw(" Export as CSV"),
         ]),
         Line::from(vec![
-            Span::styled("[J]", Theme::hotkey()),
+            Span::styled("[J]", hotkey_style),
             Span::raw(" Export as JSON"),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Esc]", Theme::hotkey()),
+            Span::styled("[Esc]", hotkey_style),
             Span::raw(" Cancel"),
         ]),
     ];
 
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(" Export ")
+        .title_style(title_style);
+    if app.compat {
+        block = block.border_set(Compat::BORDERS);
+    }
+
     let export = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Theme::border_focused())
-                .title(" Export ")
-                .title_style(Theme::title()),
-        )
-        .style(Theme::default());
+        .block(block)
+        .style(default_style);
 
     f.render_widget(export, area);
 }
@@ -733,11 +815,20 @@ fn draw_output_overlay(f: &mut Frame, app: &App, size: Rect) {
     let area = centered_rect(72, 80, size);
     f.render_widget(Clear, area);
 
-    let block = Block::default()
+    let (border_style, title_style, content_style, dimmed_style) = if app.compat {
+        (Compat::border_focused(), Compat::title(), Compat::default(), Compat::dimmed())
+    } else {
+        (Theme::border_focused(), Theme::title(), Theme::default(), Theme::dimmed())
+    };
+
+    let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Theme::border_focused())
+        .border_style(border_style)
         .title(format!(" {} ", app.overlay_title))
-        .title_style(Theme::title());
+        .title_style(title_style);
+    if app.compat {
+        block = block.border_set(Compat::BORDERS);
+    }
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -772,13 +863,15 @@ fn draw_output_overlay(f: &mut Frame, app: &App, size: Rect) {
         height: 1,
     };
 
-    let content = Paragraph::new(content_lines).style(Theme::default());
+    let content = Paragraph::new(content_lines).style(content_style);
     f.render_widget(content, content_area);
 
-    let hint = Paragraph::new(Line::from(Span::styled(
-        "[Esc/Q] Stop   [↑↓/j/k] Scroll   [Home/End] Top/Bottom",
-        Theme::dimmed(),
-    )));
+    let scroll_hint = if app.compat {
+        "[Esc/Q] Stop   [^/v/j/k] Scroll   [Home/End] Top/Bottom"
+    } else {
+        "[Esc/Q] Stop   [↑↓/j/k] Scroll   [Home/End] Top/Bottom"
+    };
+    let hint = Paragraph::new(Line::from(Span::styled(scroll_hint, dimmed_style)));
     f.render_widget(hint, hint_area);
 }
 
@@ -893,20 +986,29 @@ fn draw_keybindings_popup(f: &mut Frame, app: &App, size: Rect) {
     f.render_widget(popup, popup_area);
 }
 
-fn draw_message(f: &mut Frame, size: Rect, message: &str) {
+fn draw_message(f: &mut Frame, app: &App, size: Rect, message: &str) {
     let area = centered_rect(50, 10, size);
 
     f.render_widget(Clear, area);
 
+    let (border_style, title_style, default_style) = if app.compat {
+        (Compat::border_focused(), Compat::title(), Compat::default())
+    } else {
+        (Theme::border_focused(), Theme::title(), Theme::default())
+    };
+
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(" Message ")
+        .title_style(title_style);
+    if app.compat {
+        block = block.border_set(Compat::BORDERS);
+    }
+
     let msg = Paragraph::new(message)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Theme::border_focused())
-                .title(" Message ")
-                .title_style(Theme::title()),
-        )
-        .style(Theme::default())
+        .block(block)
+        .style(default_style)
         .wrap(Wrap { trim: true });
 
     f.render_widget(msg, area);

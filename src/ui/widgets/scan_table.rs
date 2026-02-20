@@ -10,13 +10,14 @@ use ratatui::{
 };
 
 use crate::app::HostInfo;
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Compat, Theme};
 
 pub struct ScanTable<'a> {
     hosts: &'a [HostInfo],
     show_rtt: bool,
     focused: bool,
     selected_ips: Option<&'a HashSet<Ipv4Addr>>,
+    compat: bool,
 }
 
 impl<'a> ScanTable<'a> {
@@ -26,6 +27,7 @@ impl<'a> ScanTable<'a> {
             show_rtt: true,
             focused: true,
             selected_ips: None,
+            compat: false,
         }
     }
 
@@ -43,6 +45,11 @@ impl<'a> ScanTable<'a> {
         self.selected_ips = Some(ips);
         self
     }
+
+    pub fn compat(mut self, compat: bool) -> Self {
+        self.compat = compat;
+        self
+    }
 }
 
 impl<'a> StatefulWidget for ScanTable<'a> {
@@ -55,8 +62,9 @@ impl<'a> StatefulWidget for ScanTable<'a> {
             vec!["IP", "STATUS", "HOSTNAME"]
         };
 
+        let header_style = if self.compat { Compat::header() } else { Theme::header() };
         let header = Row::new(header_cells)
-            .style(Theme::header())
+            .style(header_style)
             .height(1);
 
         let rows: Vec<Row> = self
@@ -68,15 +76,26 @@ impl<'a> StatefulWidget for ScanTable<'a> {
                     .is_some_and(|s| s.contains(&host.ip));
 
                 let ip_cell = if is_selected {
+                    let (sel_sym, sel_style) = if self.compat {
+                        ("x ", Compat::accent())
+                    } else {
+                        ("✓ ", Style::default().fg(Theme::SUCCESS))
+                    };
                     Line::from(vec![
-                        Span::styled("✓ ", Style::default().fg(Theme::SUCCESS)),
+                        Span::styled(sel_sym, sel_style),
                         Span::raw(host.ip.to_string()),
                     ])
                 } else {
                     Line::from(host.ip.to_string())
                 };
 
-                let status_span = if host.is_alive {
+                let status_span = if self.compat {
+                    if host.is_alive {
+                        Span::styled(Compat::SYM_ONLINE, Compat::status_online())
+                    } else {
+                        Span::styled(Compat::SYM_OFFLINE, Compat::status_offline())
+                    }
+                } else if host.is_alive {
                     Span::styled("●", Theme::status_online())
                 } else {
                     Span::styled("○", Theme::status_offline())
@@ -84,13 +103,17 @@ impl<'a> StatefulWidget for ScanTable<'a> {
 
                 // Fall back to MAC vendor when no hostname is resolved
                 let (hostname_text, hostname_style) = if let Some(name) = host.hostname.as_deref() {
-                    (name.to_string(), Theme::default())
+                    let style = if self.compat { Compat::default() } else { Theme::default() };
+                    (name.to_string(), style)
                 } else if let Some(vendor) = host.mac.as_ref().and_then(|m| m.vendor.as_deref()) {
-                    (format!("[{}]", vendor), Theme::dimmed())
+                    let style = if self.compat { Compat::dimmed() } else { Theme::dimmed() };
+                    (format!("[{}]", vendor), style)
                 } else {
-                    ("-".to_string(), Theme::default())
+                    let style = if self.compat { Compat::default() } else { Theme::default() };
+                    ("-".to_string(), style)
                 };
 
+                let row_style = if self.compat { Compat::default() } else { Theme::default() };
                 let cells: Vec<Line> = if self.show_rtt {
                     let rtt = host
                         .rtt
@@ -111,7 +134,7 @@ impl<'a> StatefulWidget for ScanTable<'a> {
                     ]
                 };
 
-                Row::new(cells).style(Theme::default())
+                Row::new(cells).style(row_style)
             })
             .collect();
 
@@ -132,23 +155,28 @@ impl<'a> StatefulWidget for ScanTable<'a> {
             .as_slice()
         };
 
-        let border_style = if self.focused {
-            Theme::border_focused()
+        let (border_style, title_style, highlight_style, cursor_sym) = if self.compat {
+            let border = if self.focused { Compat::border_focused() } else { Compat::border() };
+            (border, Compat::title(), Compat::selected(), Compat::SYM_CURSOR)
         } else {
-            Theme::border()
+            let border = if self.focused { Theme::border_focused() } else { Theme::border() };
+            (border, Theme::title(), Theme::selected(), "▶ ")
         };
+
+        let mut block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(" Hosts ")
+            .title_style(title_style);
+        if self.compat {
+            block = block.border_set(Compat::BORDERS);
+        }
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .title(" Hosts ")
-                    .title_style(Theme::title()),
-            )
-            .row_highlight_style(Theme::selected())
-            .highlight_symbol("▶ ");
+            .block(block)
+            .row_highlight_style(highlight_style)
+            .highlight_symbol(cursor_sym);
 
         StatefulWidget::render(table, area, buf, state);
     }

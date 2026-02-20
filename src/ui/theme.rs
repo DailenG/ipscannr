@@ -1,4 +1,5 @@
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols;
 
 /// Minimal dark color palette
 pub struct Theme;
@@ -85,5 +86,76 @@ impl Theme {
 
     pub fn progress_bg() -> Style {
         Style::default().fg(Self::BORDER)
+    }
+}
+
+// ── Compat mode (ASCII-only) ──────────────────────────────────────────────────
+
+/// ASCII symbol set for compat mode (replaces Unicode glyphs)
+pub struct Compat;
+
+impl Compat {
+    pub const SYM_ONLINE: &'static str = "*";
+    pub const SYM_OFFLINE: &'static str = ".";
+    pub const SYM_SELECTED: &'static str = "x";
+    pub const SYM_CURSOR: &'static str = "> ";
+    pub const SYM_PROGRESS_FILL: &'static str = "#";
+    pub const SYM_PROGRESS_EMPTY: &'static str = "-";
+    pub const SYM_CACHED: &'static str = "[c]";
+
+    /// ASCII border set: `+`, `-`, `|` corners for compat rendering
+    pub const BORDERS: symbols::border::Set = symbols::border::Set {
+        top_left: "+",
+        top_right: "+",
+        bottom_left: "+",
+        bottom_right: "+",
+        vertical_left: "|",
+        vertical_right: "|",
+        horizontal_top: "-",
+        horizontal_bottom: "-",
+    };
+
+    // Compat styles use basic 16-color ANSI (no RGB) for maximum compatibility
+    pub fn default() -> Style {
+        Style::default()
+    }
+    pub fn title() -> Style {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    }
+    pub fn border() -> Style {
+        Style::default()
+    }
+    pub fn border_focused() -> Style {
+        Style::default().fg(Color::Cyan)
+    }
+    pub fn status_online() -> Style {
+        Style::default().fg(Color::Green)
+    }
+    pub fn status_offline() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+    pub fn selected() -> Style {
+        Style::default().add_modifier(Modifier::REVERSED)
+    }
+    pub fn dimmed() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+    pub fn hotkey() -> Style {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    }
+    pub fn accent() -> Style {
+        Style::default().fg(Color::Cyan)
+    }
+    pub fn header() -> Style {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    }
+    pub fn progress_bar() -> Style {
+        Style::default().fg(Color::Cyan)
+    }
+    pub fn progress_bg() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+    pub fn warning() -> Style {
+        Style::default().fg(Color::Yellow)
     }
 }

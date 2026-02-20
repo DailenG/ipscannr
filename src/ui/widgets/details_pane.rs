@@ -9,12 +9,13 @@ use ratatui::{
 use crate::app::HostInfo;
 use crate::cache::format_cache_age;
 use crate::scanner::get_service_name;
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Compat, Theme};
 
 pub struct DetailsPane<'a> {
     host: Option<&'a HostInfo>,
     focused: bool,
     port_scanning: bool,
+    compat: bool,
 }
 
 impl<'a> DetailsPane<'a> {
@@ -23,6 +24,7 @@ impl<'a> DetailsPane<'a> {
             host,
             focused: false,
             port_scanning: false,
+            compat: false,
         }
     }
 
@@ -35,21 +37,31 @@ impl<'a> DetailsPane<'a> {
         self.port_scanning = scanning;
         self
     }
+
+    pub fn compat(mut self, compat: bool) -> Self {
+        self.compat = compat;
+        self
+    }
 }
 
 impl Widget for DetailsPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.focused {
-            Theme::border_focused()
+        let (border_style, title_style, dimmed_style, default_style, header_style, accent_style, status_online_style, status_offline_style, warning_style) = if self.compat {
+            let border = if self.focused { Compat::border_focused() } else { Compat::border() };
+            (border, Compat::title(), Compat::dimmed(), Compat::default(), Compat::header(), Compat::accent(), Compat::status_online(), Compat::status_offline(), Compat::warning())
         } else {
-            Theme::border()
+            let border = if self.focused { Theme::border_focused() } else { Theme::border() };
+            (border, Theme::title(), Theme::dimmed(), Theme::default(), Theme::header(), Style::default().fg(Theme::ACCENT), Theme::status_online(), Theme::status_offline(), Style::default().fg(Theme::WARNING))
         };
 
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
             .title(" Host Details ")
-            .title_style(Theme::title());
+            .title_style(title_style);
+        if self.compat {
+            block = block.border_set(Compat::BORDERS);
+        }
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -57,7 +69,7 @@ impl Widget for DetailsPane<'_> {
         let Some(host) = self.host else {
             let empty_msg = Paragraph::new(Line::from(Span::styled(
                 "Select a host to view details",
-                Theme::dimmed(),
+                dimmed_style,
             )));
             empty_msg.render(inner, buf);
             return;
@@ -68,10 +80,11 @@ impl Widget for DetailsPane<'_> {
         // Cache indicator — shown when this host's data came from a previous scan
         if let Some(scanned_at) = host.cached_at {
             let age = format_cache_age(scanned_at);
+            let cache_sym = if self.compat { Compat::SYM_CACHED } else { "◷" };
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("◷ Cached · {}", age),
-                    Style::default().fg(Theme::WARNING),
+                    format!("{} Cached · {}", cache_sym, age),
+                    warning_style,
                 ),
             ]));
             lines.push(Line::from(""));
@@ -79,35 +92,31 @@ impl Widget for DetailsPane<'_> {
 
         // IP Address
         lines.push(Line::from(vec![
-            Span::styled("IP:       ", Theme::dimmed()),
-            Span::styled(host.ip.to_string(), Theme::default()),
+            Span::styled("IP:       ", dimmed_style),
+            Span::styled(host.ip.to_string(), default_style),
         ]));
 
         // Status
-        let status_style = if host.is_alive {
-            Theme::status_online()
-        } else {
-            Theme::status_offline()
-        };
+        let status_style = if host.is_alive { status_online_style } else { status_offline_style };
         let status_text = if host.is_alive { "Online" } else { "Offline" };
         lines.push(Line::from(vec![
-            Span::styled("Status:   ", Theme::dimmed()),
+            Span::styled("Status:   ", dimmed_style),
             Span::styled(status_text, status_style),
         ]));
 
         // RTT
         if let Some(rtt) = host.rtt {
             lines.push(Line::from(vec![
-                Span::styled("RTT:      ", Theme::dimmed()),
-                Span::styled(format!("{}ms", rtt.as_millis()), Theme::default()),
+                Span::styled("RTT:      ", dimmed_style),
+                Span::styled(format!("{}ms", rtt.as_millis()), default_style),
             ]));
         }
 
         // Hostname
         if let Some(hostname) = &host.hostname {
             lines.push(Line::from(vec![
-                Span::styled("Hostname: ", Theme::dimmed()),
-                Span::styled(hostname.clone(), Theme::default()),
+                Span::styled("Hostname: ", dimmed_style),
+                Span::styled(hostname.clone(), default_style),
             ]));
         }
 
@@ -119,26 +128,26 @@ impl Widget for DetailsPane<'_> {
                 mac.address.clone()
             };
             lines.push(Line::from(vec![
-                Span::styled("MAC:      ", Theme::dimmed()),
-                Span::styled(mac_text, Theme::default()),
+                Span::styled("MAC:      ", dimmed_style),
+                Span::styled(mac_text, default_style),
             ]));
         }
 
         // Open Ports
         lines.push(Line::from(""));
         if self.port_scanning {
-            lines.push(Line::from(Span::styled("Scanning ports…", Theme::dimmed())));
+            lines.push(Line::from(Span::styled("Scanning ports...", dimmed_style)));
         } else if host.open_ports.is_empty() {
             if host.ports_scanned && host.is_alive {
-                lines.push(Line::from(Span::styled("No open ports found", Theme::dimmed())));
+                lines.push(Line::from(Span::styled("No open ports found", dimmed_style)));
             }
         } else {
-            lines.push(Line::from(Span::styled("Open Ports:", Theme::header())));
+            lines.push(Line::from(Span::styled("Open Ports:", header_style)));
             for port in &host.open_ports {
                 let service = get_service_name(*port);
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:5} ", port), Theme::accent()),
-                    Span::styled(service, Theme::dimmed()),
+                    Span::styled(format!("  {:5} ", port), accent_style),
+                    Span::styled(service, dimmed_style),
                 ]));
             }
         }
@@ -148,13 +157,3 @@ impl Widget for DetailsPane<'_> {
     }
 }
 
-// Helper trait for theme
-trait ThemeExt {
-    fn accent() -> ratatui::style::Style;
-}
-
-impl ThemeExt for Theme {
-    fn accent() -> ratatui::style::Style {
-        ratatui::style::Style::default().fg(Theme::ACCENT)
-    }
-}

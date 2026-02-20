@@ -10,6 +10,7 @@ pub struct Config {
     pub port_scan: PortScannerConfig,
     pub resolve_hostnames: bool,
     pub detect_mac: bool,
+    pub compat: bool,
 }
 
 impl Default for Config {
@@ -27,6 +28,7 @@ impl Default for Config {
             },
             resolve_hostnames: true,
             detect_mac: true,
+            compat: false,
         }
     }
 }

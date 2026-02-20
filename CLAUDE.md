@@ -11,6 +11,10 @@ cargo run
 # Run with CLI args (auto-start scan on a range)
 cargo run -- --range 192.168.1.0/24 --scan
 
+# Compatibility mode (ASCII-only, for RMM consoles / limited environments)
+cargo run -- --compat
+cargo run -- --range 192.168.1.0/24 --scan --compat
+
 # Release build
 cargo build --release
 

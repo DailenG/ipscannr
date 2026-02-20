@@ -5,12 +5,13 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Compat, Theme};
 
 pub struct ProgressBar {
     progress: f64, // 0.0 to 1.0
     label: Option<String>,
     show_percentage: bool,
+    compat: bool,
 }
 
 impl ProgressBar {
@@ -19,6 +20,7 @@ impl ProgressBar {
             progress: progress.clamp(0.0, 1.0),
             label: None,
             show_percentage: true,
+            compat: false,
         }
     }
 
@@ -29,6 +31,11 @@ impl ProgressBar {
 
     pub fn show_percentage(mut self, show: bool) -> Self {
         self.show_percentage = show;
+        self
+    }
+
+    pub fn compat(mut self, compat: bool) -> Self {
+        self.compat = compat;
         self
     }
 }
@@ -61,7 +68,8 @@ impl Widget for ProgressBar {
 
         // Draw label
         if !label_text.is_empty() {
-            let label_span = Span::styled(&label_text, Theme::default());
+            let lbl_style = if self.compat { Compat::default() } else { Theme::default() };
+            let label_span = Span::styled(&label_text, lbl_style);
             buf.set_span(x, area.y, &label_span, label_width);
             x += label_width + 1;
         }
@@ -70,29 +78,49 @@ impl Widget for ProgressBar {
         let filled_width = (bar_width as f64 * self.progress).round() as u16;
         let empty_width = bar_width.saturating_sub(filled_width);
 
+        let (fill_ch, empty_ch, bar_style, bg_style, bracket_style, pct_style) = if self.compat {
+            (
+                Compat::SYM_PROGRESS_FILL,
+                Compat::SYM_PROGRESS_EMPTY,
+                Compat::progress_bar(),
+                Compat::progress_bg(),
+                Compat::border(),
+                Compat::dimmed(),
+            )
+        } else {
+            (
+                "█",
+                "░",
+                Theme::progress_bar(),
+                Theme::progress_bg(),
+                Theme::border(),
+                Theme::dimmed(),
+            )
+        };
+
         // Opening bracket
-        buf.set_string(x, area.y, "[", Theme::border());
+        buf.set_string(x, area.y, "[", bracket_style);
         x += 1;
 
         // Filled portion
-        let filled_str: String = "█".repeat(filled_width as usize);
-        let filled_span = Span::styled(filled_str, Theme::progress_bar());
+        let filled_str: String = fill_ch.repeat(filled_width as usize);
+        let filled_span = Span::styled(filled_str, bar_style);
         buf.set_span(x, area.y, &filled_span, filled_width);
         x += filled_width;
 
         // Empty portion
-        let empty_str: String = "░".repeat(empty_width as usize);
-        let empty_span = Span::styled(empty_str, Theme::progress_bg());
+        let empty_str: String = empty_ch.repeat(empty_width as usize);
+        let empty_span = Span::styled(empty_str, bg_style);
         buf.set_span(x, area.y, &empty_span, empty_width);
         x += empty_width;
 
         // Closing bracket
-        buf.set_string(x, area.y, "]", Theme::border());
+        buf.set_string(x, area.y, "]", bracket_style);
         x += 1;
 
         // Percentage
         if self.show_percentage {
-            let pct_span = Span::styled(percentage_text, Theme::dimmed());
+            let pct_span = Span::styled(percentage_text, pct_style);
             buf.set_span(x, area.y, &pct_span, percentage_width);
         }
     }

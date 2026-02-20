@@ -5,12 +5,13 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Compat, Theme};
 
 pub struct StatusBar<'a> {
     hotkeys: Vec<(&'a str, &'a str)>,
     status_left: Option<String>,
     status_right: Option<String>,
+    compat: bool,
 }
 
 impl<'a> StatusBar<'a> {
@@ -27,6 +28,7 @@ impl<'a> StatusBar<'a> {
             ],
             status_left: None,
             status_right: None,
+            compat: false,
         }
     }
 
@@ -39,7 +41,13 @@ impl<'a> StatusBar<'a> {
             ],
             status_left: None,
             status_right: None,
+            compat: false,
         }
+    }
+
+    pub fn compat(mut self, compat: bool) -> Self {
+        self.compat = compat;
+        self
     }
 
     pub fn status_left(mut self, status: impl Into<String>) -> Self {
@@ -66,14 +74,24 @@ impl Default for StatusBar<'_> {
 
 impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let (hotkey_style, desc_style, dimmed_style) = if self.compat {
+            (Compat::hotkey(), Compat::dimmed(), Compat::dimmed())
+        } else {
+            (Theme::hotkey(), Theme::hotkey_desc(), Theme::dimmed())
+        };
+
         // Build hotkey spans
         let mut hotkey_spans = Vec::new();
         for (i, (key, desc)) in self.hotkeys.iter().enumerate() {
             if i > 0 {
-                hotkey_spans.push(Span::styled(" ", Theme::default()));
+                if self.compat {
+                    hotkey_spans.push(Span::styled(" ", Compat::default()));
+                } else {
+                    hotkey_spans.push(Span::styled(" ", Theme::default()));
+                }
             }
-            hotkey_spans.push(Span::styled(format!("[{}]", key), Theme::hotkey()));
-            hotkey_spans.push(Span::styled(*desc, Theme::hotkey_desc()));
+            hotkey_spans.push(Span::styled(format!("[{}]", key), hotkey_style));
+            hotkey_spans.push(Span::styled(*desc, desc_style));
         }
 
         let chunks = Layout::horizontal([
@@ -84,7 +102,7 @@ impl Widget for StatusBar<'_> {
 
         // Render status_left (dim hint) if set, otherwise render hotkeys
         if let Some(left) = self.status_left {
-            let left_line = Line::from(Span::styled(left, Theme::dimmed()));
+            let left_line = Line::from(Span::styled(left, dimmed_style));
             buf.set_line(chunks[0].x, chunks[0].y, &left_line, chunks[0].width);
         } else {
             let hotkey_line = Line::from(hotkey_spans);
@@ -93,7 +111,7 @@ impl Widget for StatusBar<'_> {
 
         // Render status on the right
         if let Some(status) = self.status_right {
-            let status_line = Line::from(Span::styled(status, Theme::dimmed()));
+            let status_line = Line::from(Span::styled(status, dimmed_style));
             let x = chunks[1].x + chunks[1].width.saturating_sub(status_line.width() as u16);
             buf.set_line(x, chunks[1].y, &status_line, chunks[1].width);
         }

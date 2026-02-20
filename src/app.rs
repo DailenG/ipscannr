@@ -148,6 +148,9 @@ pub struct App {
 
     // True while the user holds Left Ctrl — shows contextual keybindings popup
     pub show_keybindings: bool,
+
+    // ASCII-only compat mode (set from --compat CLI flag)
+    pub compat: bool,
 }
 
 impl App {
@@ -156,6 +159,7 @@ impl App {
         // Start with default range - adapters will be loaded in background
         let range_input = config.default_range.clone();
         let range_cursor = range_input.len();
+        let compat = config.compat;
 
         Self {
             config,
@@ -197,6 +201,8 @@ impl App {
             port_scanning: false,
 
             show_keybindings: false,
+
+            compat,
         }
     }
 
