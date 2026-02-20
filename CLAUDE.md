@@ -52,6 +52,24 @@ cargo fmt
 - Favor durable file-write patterns for persisted state (temp file + replace semantics).
 - Treat pause/resume/cancel paths as high-risk and validate them explicitly after edits.
 
+## Semantic Versioning
+
+Version is defined in `Cargo.toml` only — clap reads it automatically via `#[command(version)]`.
+
+### Rules (required)
+- **PATCH** `1.0.x` — bug fixes, cosmetic/display changes, internal refactors with no
+  user-visible behavior change. Bump before the commit that fixes the bug.
+- **MINOR** `1.x.0` — new features, new CLI flags, new modes, new capabilities added
+  without removing existing ones. Bump before the commit that adds the feature.
+- **MAJOR** `x.0.0` — breaking changes to CLI interface, removal of existing flags/features,
+  or fundamental behavioral overhaul. Discuss before bumping.
+
+### Workflow
+- Bump `Cargo.toml` in the **same commit** as (or immediately before) the change that
+  warrants the bump.
+- Never let multiple features accumulate under one unreleased version bump.
+- The version visible via `ipscannr --version` must always reflect the current binary.
+
 ## Architecture Overview
 
 **ipscannr** is a terminal-based network scanner (TUI) written in Rust using `ratatui` + `crossterm` for UI and `tokio` for async concurrency.
