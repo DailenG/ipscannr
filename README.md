@@ -38,9 +38,12 @@ vendor info, all without leaving the terminal.
 
 ## Screenshot
 
-<img width="600" alt="Image" src="https://github.com/user-attachments/assets/f8b7ba44-3021-446b-9ef6-6ce4873f6c23" />
-<img width="600" alt="Image" src="https://github.com/user-attachments/assets/dddaae89-d3da-494d-a1b6-7ee181f2d7f9" />
 <img width="600" alt="Image" src="https://github.com/user-attachments/assets/9f13eae5-791e-48cc-8854-d06f384e09aa" />
+
+<img width="600" alt="Image" src="https://github.com/user-attachments/assets/f8b7ba44-3021-446b-9ef6-6ce4873f6c23" />
+
+<img width="600" alt="Image" src="https://github.com/user-attachments/assets/dddaae89-d3da-494d-a1b6-7ee181f2d7f9" />
+
 <img width="600" alt="Image" src="https://github.com/user-attachments/assets/5921a08c-8596-4de5-9f12-100f5a01d44f" />
 
 ---
