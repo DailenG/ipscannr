@@ -64,6 +64,7 @@ impl FilterMode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
             FilterMode::All => "All",
@@ -207,6 +208,7 @@ impl App {
     }
 
     /// Load adapters (call from async context)
+    #[allow(dead_code)]
     pub fn load_adapters(&mut self) {
         self.adapters = get_active_adapters();
         self.adapters_loading = false;
@@ -771,6 +773,7 @@ impl App {
             .map(|&i| &self.hosts[i])
     }
 
+    #[allow(dead_code)]
     pub fn selected_host_mut(&mut self) -> Option<&mut HostInfo> {
         let idx = self
             .table_state

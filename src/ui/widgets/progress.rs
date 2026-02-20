@@ -24,6 +24,7 @@ impl ProgressBar {
         }
     }
 
+    #[allow(dead_code)]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self

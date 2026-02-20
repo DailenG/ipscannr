@@ -135,10 +135,12 @@ impl IpRange {
         &self.addresses
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.addresses.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.addresses.is_empty()
     }

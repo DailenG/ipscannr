@@ -67,6 +67,7 @@ impl std::fmt::Display for AdapterType {
 
 /// Information about a network adapter
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AdapterInfo {
     pub name: String,
     pub adapter_type: AdapterType,
@@ -151,6 +152,7 @@ pub fn get_active_adapters() -> Vec<AdapterInfo> {
 }
 
 /// Get the default adapter (prefer Ethernet over WiFi)
+#[allow(dead_code)]
 pub fn get_default_adapter() -> Option<AdapterInfo> {
     get_active_adapters().into_iter().next()
 }

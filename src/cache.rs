@@ -198,6 +198,7 @@ mod tests {
                 vendor: Some("Vendor".to_string()),
             }),
             open_ports: vec![80, 443],
+            ports_scanned: true,
             cached_at: None,
             method: PingMethod::Icmp,
             status: if is_alive {

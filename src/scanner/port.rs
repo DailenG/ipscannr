@@ -79,6 +79,7 @@ fn lazy_static_services() -> &'static HashMap<u16, &'static str> {
 pub struct PortResult {
     pub port: u16,
     pub is_open: bool,
+    #[allow(dead_code)]
     pub service: &'static str,
 }
 
@@ -200,6 +201,7 @@ impl PortScanner {
 
 /// Parse port specification string
 /// Formats: "80", "80,443,8080", "1-1024", "80,443,1000-2000"
+#[allow(dead_code)]
 pub fn parse_ports(input: &str) -> Vec<u16> {
     let mut ports = Vec::new();
 

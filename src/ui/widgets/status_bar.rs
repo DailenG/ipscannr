@@ -32,6 +32,7 @@ impl<'a> StatusBar<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn compact() -> Self {
         Self {
             hotkeys: vec![
@@ -60,6 +61,7 @@ impl<'a> StatusBar<'a> {
         self
     }
 
+    #[allow(dead_code)]
     pub fn hotkeys(mut self, hotkeys: Vec<(&'a str, &'a str)>) -> Self {
         self.hotkeys = hotkeys;
         self

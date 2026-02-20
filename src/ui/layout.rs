@@ -22,6 +22,7 @@ impl LayoutMode {
 pub struct AppLayout {
     pub mode: LayoutMode,
     pub header: Rect,
+    #[allow(dead_code)]
     pub main: Rect,
     pub hosts_table: Rect,
     pub details_pane: Option<Rect>,
@@ -74,6 +75,7 @@ impl AppLayout {
         self.mode == LayoutMode::Compact
     }
 
+    #[allow(dead_code)]
     pub fn is_full(&self) -> bool {
         self.mode == LayoutMode::Full
     }

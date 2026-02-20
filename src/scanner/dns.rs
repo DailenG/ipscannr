@@ -51,6 +51,7 @@ impl DnsResolver {
     }
 
     /// Resolve multiple IP addresses concurrently
+    #[allow(dead_code)]
     pub async fn resolve_batch(&self, ips: Vec<Ipv4Addr>) -> HashMap<Ipv4Addr, Option<String>> {
         let mut handles = Vec::new();
 
@@ -79,6 +80,7 @@ impl DnsResolver {
     }
 
     /// Clear the cache
+    #[allow(dead_code)]
     pub async fn clear_cache(&self) {
         let mut cache = self.cache.lock().await;
         cache.clear();

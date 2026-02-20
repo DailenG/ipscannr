@@ -10,6 +10,7 @@ impl Theme {
     pub const FG: Color = Color::Rgb(200, 200, 210);
     pub const ACCENT: Color = Color::Rgb(100, 149, 237);
     pub const SUCCESS: Color = Color::Rgb(80, 200, 120);
+    #[allow(dead_code)]
     pub const ERROR: Color = Color::Rgb(220, 80, 80);
     pub const WARNING: Color = Color::Rgb(230, 180, 80);
     pub const DIM: Color = Color::Rgb(90, 90, 100);
@@ -43,6 +44,7 @@ impl Theme {
         Style::default().fg(Self::DIM)
     }
 
+    #[allow(dead_code)]
     pub fn status_scanning() -> Style {
         Style::default()
             .fg(Self::WARNING)
@@ -60,6 +62,7 @@ impl Theme {
         Style::default().fg(Self::DIM)
     }
 
+    #[allow(dead_code)]
     pub fn error() -> Style {
         Style::default().fg(Self::ERROR)
     }
@@ -97,6 +100,7 @@ pub struct Compat;
 impl Compat {
     pub const SYM_ONLINE: &'static str = "*";
     pub const SYM_OFFLINE: &'static str = ".";
+    #[allow(dead_code)]
     pub const SYM_SELECTED: &'static str = "x";
     pub const SYM_CURSOR: &'static str = "> ";
     pub const SYM_PROGRESS_FILL: &'static str = "#";

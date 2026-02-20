@@ -160,7 +160,6 @@ impl Pinger {
     }
 
     async fn icmp_ping(&self, client: &Client, ip: Ipv4Addr, seq: u16) -> Option<Duration> {
-        let start = Instant::now();
         let payload = [0; 56]; // Standard ping payload size
         
         let mut pinger = client.pinger(IpAddr::V4(ip), PingIdentifier(rand::random())).await;
